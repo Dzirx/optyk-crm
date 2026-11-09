@@ -14,7 +14,11 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx lib/db/seed.ts",
     "db:seed:auto": "tsx lib/db/seed.ts --silent",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "test:unit": "TZ=UTC node --import tsx --test tests/unit/*.test.ts",
+    "test:e2e": "bash tests/e2e/run.sh",
+    "test:edition": "bash tests/e2e/edition.sh",
+    "test": "npm run test:unit && npm run test:e2e"
   },
   "dependencies": {
     "@prisma/client": "^6.19.2",

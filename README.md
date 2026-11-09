@@ -109,6 +109,26 @@ npm run start            # Start production server
 npm run lint             # Run ESLint
 ```
 
+## Testy
+
+```bash
+npm run test:unit      # testy jednostkowe (node:test + tsx), bez Dockera
+npm run test:e2e       # testy e2e: baza w Dockerze + serwer next dev + wszystkie suity
+npm test               # oba powyższe
+npm run test:edition   # opcjonalnie: edycje Windows/chmura na kompilacji produkcyjnej (wymaga `next build`)
+```
+
+Wymagania dla testów e2e:
+
+- uruchomiony Docker Desktop (skrypty używają kontekstu `desktop-linux`),
+- wolne porty: 3131 (aplikacja) i 55441 (Postgres),
+- zainstalowane zależności (`npm install`).
+
+Skrypt `tests/e2e/run.sh` sam tworzy jednorazową bazę (`postgres:16-alpine`, kontener `optyk-e2e-db`),
+zakłada schemat, dodaje konto admina, tworzy klucze licencji w pamięci i uruchamia serwer.
+Po testach zawsze usuwa serwer i kontener. Pliki `.env` nie są używane ani zmieniane.
+Pojedyncza suita: `npm run test:e2e -- idor` (dostępne: `idor`, `fixes`, `trial`, `license`).
+
 ## Configuration
 
 ### Environment Variables
