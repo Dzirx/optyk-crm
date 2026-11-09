@@ -91,8 +91,8 @@ export default function InventoryPage() {
     setSubmitting(true);
     try {
       const method = editingItem ? 'PATCH' : 'POST';
-      const body = editingItem ? { id: editingItem.id, ...form } : form;
-      const res = await fetch('/api/inventory', { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const url = editingItem ? `/api/inventory/${editingItem.id}` : '/api/inventory';
+      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
       if (!res.ok) {
         const d = await res.json();
         setError(d.error || 'Błąd zapisu');
@@ -110,7 +110,7 @@ export default function InventoryPage() {
   async function handleDelete(id: string) {
     if (!confirm(t('areYouSureInventory'))) return;
     try {
-      await fetch(`/api/inventory?id=${id}`, { method: 'DELETE' });
+      await fetch(`/api/inventory/${id}`, { method: 'DELETE' });
       fetchItems();
     } catch {
       setError('Błąd usuwania');
@@ -121,10 +121,10 @@ export default function InventoryPage() {
     const qty = parseInt(editingQtyValue);
     if (isNaN(qty)) { setEditingQtyId(null); return; }
     try {
-      await fetch('/api/inventory', {
+      await fetch(`/api/inventory/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, quantity: qty }),
+        body: JSON.stringify({ quantity: qty }),
       });
       setEditingQtyId(null);
       fetchItems();

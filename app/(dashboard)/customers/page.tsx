@@ -95,11 +95,10 @@ export default function CustomersPage() {
     setFormLoading(true);
 
     try {
-      const response = await fetch('/api/customers', {
+      const response = await fetch(`/api/customers/${editingCustomer.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: editingCustomer.id,
           ...formData,
           phone: formData.phone.trim().replace(/\s/g, ''),
         }),
@@ -125,7 +124,7 @@ export default function CustomersPage() {
     if (!confirm(t('areYouSureDeleteAllVisits'))) return;
 
     try {
-      const response = await fetch(`/api/customers?id=${id}`, {
+      const response = await fetch(`/api/customers/${id}`, {
         method: 'DELETE',
       });
 

@@ -152,11 +152,10 @@ export default function VisitsPage() {
     setFormLoading(true);
 
     try {
-      const response = await fetch('/api/visits', {
+      const response = await fetch(`/api/visits/${editingVisit.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: editingVisit.id,
           ...formData,
           visitDate: localInputToIso(formData.visitDate),
           reminderSmsDate: localInputToIso(formData.reminderSmsDate),
@@ -183,7 +182,7 @@ export default function VisitsPage() {
     if (!confirm(t('areYouSure'))) return;
 
     try {
-      const response = await fetch(`/api/visits?id=${id}`, {
+      const response = await fetch(`/api/visits/${id}`, {
         method: 'DELETE',
       });
 
@@ -201,10 +200,10 @@ export default function VisitsPage() {
 
   const handleSendSms = async (visitId: string, smsType: 'reminder' | 'review') => {
     try {
-      const response = await fetch('/api/visits/send-sms', {
+      const response = await fetch(`/api/visits/${visitId}/send-sms`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ visitId, smsType }),
+        body: JSON.stringify({ smsType }),
       });
 
       const data = await response.json();

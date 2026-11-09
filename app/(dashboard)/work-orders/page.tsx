@@ -132,14 +132,13 @@ export default function WorkOrdersPage() {
       if (!customerId) { setError(t('pleaseSelectCustomer')); setSubmitting(false); return; }
 
       const payload = { ...form, totalAmount: effectiveTotal, customerId };
-      const url = '/api/work-orders';
+      const url = editingOrder ? `/api/work-orders/${editingOrder.id}` : '/api/work-orders';
       const method = editingOrder ? 'PATCH' : 'POST';
-      const body = editingOrder ? { id: editingOrder.id, ...payload } : payload;
 
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -155,11 +154,7 @@ export default function WorkOrdersPage() {
   async function handleSendReviewSms(workOrderId: string) {
     setSendingSmsId(workOrderId);
     try {
-      const res = await fetch('/api/work-orders/send-sms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workOrderId }),
-      });
+      const res = await fetch(`/api/work-orders/${workOrderId}/send-sms`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to send SMS');
       await fetchWorkOrders();
@@ -172,10 +167,10 @@ export default function WorkOrdersPage() {
 
   async function handleStatusChange(id: string, status: string) {
     try {
-      const res = await fetch('/api/work-orders', {
+      const res = await fetch(`/api/work-orders/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, status }),
+        body: JSON.stringify({ status }),
       });
       if (!res.ok) throw new Error();
       await fetchWorkOrders();
@@ -187,7 +182,7 @@ export default function WorkOrdersPage() {
   async function handleDelete(id: string) {
     if (!confirm(t('areYouSureWorkOrder'))) return;
     try {
-      const res = await fetch(`/api/work-orders?id=${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/work-orders/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error();
       await fetchWorkOrders();
     } catch {

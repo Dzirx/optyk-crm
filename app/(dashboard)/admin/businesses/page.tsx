@@ -66,10 +66,10 @@ export default function AdminBusinessesPage() {
   const changeAccess = async (userId: string, action: 'extend' | 'unlimited' | 'block', days?: number) => {
     if (action === 'block' && !confirm('Zablokować dostęp temu kontu?')) return;
     try {
-      const response = await fetch('/api/admin/businesses', {
+      const response = await fetch(`/api/admin/users/${userId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, action, days }),
+        body: JSON.stringify({ action, days }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Nie udało się zmienić dostępu');
@@ -85,10 +85,10 @@ export default function AdminBusinessesPage() {
       'Program na starym komputerze działa dalej (licencja jest sprawdzana bez internetu).',
     )) return;
     try {
-      const response = await fetch('/api/admin/businesses', {
+      const response = await fetch(`/api/admin/users/${business.userId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: business.userId, action, limit }),
+        body: JSON.stringify({ action, limit }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Nie udało się zmienić ustawień Windows');

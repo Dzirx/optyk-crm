@@ -43,18 +43,18 @@ await run(async () => {
   check((await invQty(A, A.invId)) === 9, 'stan magazynu A zmniejszony do 9');
 
   section('ataki z konta A na dane salonu B (oczekiwane 404)');
-  let r = await A.c.req('PATCH', '/api/work-orders', { id: A.order.id, items: [{ ...bItem, opSph: '-9.99', lensPrice: '1' }] });
+  let r = await A.c.req('PATCH', `/api/work-orders/${A.order.id}`, { items: [{ ...bItem, opSph: '-9.99', lensPrice: '1' }] });
   check(r.status === 404, `nadpisanie pozycji zlecenia B → ${r.status}`, r.json);
   let bOrders = await B.c.req('GET', '/api/work-orders');
   const bItemAfter = bOrders.json.workOrders[0].items[0];
   check(bItemAfter.opSph === null && Number(bItemAfter.lensPrice) === 420, 'pozycja B bez zmian');
 
-  r = await A.c.req('PATCH', '/api/work-orders', { id: A.order.id, customerId: B.customerId });
+  r = await A.c.req('PATCH', `/api/work-orders/${A.order.id}`, { customerId: B.customerId });
   check(r.status === 404, `podpięcie klienta B pod zlecenie A → ${r.status}`, r.json);
   const aOrders = await A.c.req('GET', '/api/work-orders');
   check(!JSON.stringify(aOrders.json).includes('KlientB'), 'lista zleceń A nie zawiera danych klienta B');
 
-  r = await A.c.req('PATCH', '/api/work-orders', { id: A.order.id, items: [{ ...aItem }, { id: 'new-x', type: 'do_dali', inventoryItemIdOl: B.invId }] });
+  r = await A.c.req('PATCH', `/api/work-orders/${A.order.id}`, { items: [{ ...aItem }, { id: 'new-x', type: 'do_dali', inventoryItemIdOl: B.invId }] });
   check(r.status === 404, `zdjęcie towaru B przez edycję zlecenia A → ${r.status}`, r.json);
   r = await A.c.req('POST', '/api/work-orders', { customerId: A.customerId, receivedAt: '2026-11-08', items: [{ type: 'do_dali', inventoryItemIdFrame: B.invId }] });
   check(r.status === 404, `zdjęcie towaru B przez nowe zlecenie A → ${r.status}`, r.json);
@@ -63,25 +63,25 @@ await run(async () => {
   r = await A.c.req('POST', '/api/work-orders', { customerId: B.customerId, receivedAt: '2026-11-08', items: [] });
   check(r.status === 404, `nowe zlecenie A dla klienta B → ${r.status}`, r.json);
 
-  r = await A.c.req('PATCH', '/api/visits', { id: A.visitId, customerId: B.customerId });
+  r = await A.c.req('PATCH', `/api/visits/${A.visitId}`, { customerId: B.customerId });
   check(r.status === 404, `przepięcie wizyty A na klienta B → ${r.status}`, r.json);
 
-  r = await A.c.req('PATCH', '/api/work-orders', { id: A.order.id, customerId: 'to-nie-uuid' });
+  r = await A.c.req('PATCH', `/api/work-orders/${A.order.id}`, { customerId: 'to-nie-uuid' });
   check(r.status === 404, `zły format id → 404 zamiast 500 (${r.status})`, r.json);
-  r = await A.c.req('PATCH', '/api/work-orders', { id: A.order.id, items: [{ id: 12345, type: 'do_dali' }] });
+  r = await A.c.req('PATCH', `/api/work-orders/${A.order.id}`, { items: [{ id: 12345, type: 'do_dali' }] });
   check(r.status === 404, `id pozycji jako liczba → ${r.status}`, r.json);
 
   section('zwykłe operacje A dalej działają');
-  r = await A.c.req('PATCH', '/api/work-orders', { id: A.order.id, items: [{ ...aItem, lensPrice: '500' }], totalAmount: '' });
+  r = await A.c.req('PATCH', `/api/work-orders/${A.order.id}`, { items: [{ ...aItem, lensPrice: '500' }], totalAmount: '' });
   check(r.status === 200 && Number(r.json.workOrder.totalAmount) === 849, `edycja własnej pozycji → ${r.status}, suma ${r.json?.workOrder?.totalAmount}`);
-  r = await A.c.req('PATCH', '/api/work-orders', { id: A.order.id, customerId: A.customer2Id });
+  r = await A.c.req('PATCH', `/api/work-orders/${A.order.id}`, { customerId: A.customer2Id });
   check(r.status === 200, `zmiana klienta na innego klienta A → ${r.status}`, r.json);
-  r = await A.c.req('PATCH', '/api/work-orders', { id: A.order.id, items: [{ ...r.json.workOrder.items[0] }, { id: 'new-y', type: 'do_dali', inventoryItemIdOl: A.invId }] });
+  r = await A.c.req('PATCH', `/api/work-orders/${A.order.id}`, { items: [{ ...r.json.workOrder.items[0] }, { id: 'new-y', type: 'do_dali', inventoryItemIdOl: A.invId }] });
   check(r.status === 200, `nowa pozycja z własnym towarem → ${r.status}`, r.json);
   check((await invQty(A, A.invId)) === 8, 'stan magazynu A = 8');
-  r = await A.c.req('PATCH', '/api/visits', { id: A.visitId, customerId: A.customer2Id });
+  r = await A.c.req('PATCH', `/api/visits/${A.visitId}`, { customerId: A.customer2Id });
   check(r.status === 200, `przepięcie wizyty na innego klienta A → ${r.status}`, r.json);
-  r = await A.c.req('PATCH', '/api/visits', { id: A.visitId, customerId: A.customer2Id, notes: 'ten sam klient' });
+  r = await A.c.req('PATCH', `/api/visits/${A.visitId}`, { customerId: A.customer2Id, notes: 'ten sam klient' });
   check(r.status === 200, `zapis wizyty z tym samym klientem → ${r.status}`, r.json);
 
 
