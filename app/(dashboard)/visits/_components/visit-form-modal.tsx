@@ -2,12 +2,13 @@
 
 import type { Dispatch, FormEvent, SetStateAction } from 'react';
 import { useLanguage } from '@/lib/i18n/language-context';
-import type { Customer, NewCustomerData, VisitFormData } from '../_lib/types';
+import type { NewCustomerData, VisitFormData } from '../_lib/types';
 import { VisitCustomerPicker } from './visit-customer-picker';
 
 interface VisitFormModalProps {
   editing: boolean;
-  customers: Customer[];
+  selectedCustomerName: string;
+  setSelectedCustomerName: (value: string) => void;
   formData: VisitFormData;
   setFormData: Dispatch<SetStateAction<VisitFormData>>;
   formError: string;
@@ -24,7 +25,7 @@ interface VisitFormModalProps {
 }
 
 export function VisitFormModal({
-  editing, customers, formData, setFormData, formError, formLoading, customerSearch, setCustomerSearch,
+  editing, selectedCustomerName, setSelectedCustomerName, formData, setFormData, formError, formLoading, customerSearch, setCustomerSearch,
   showNewCustomerForm, setShowNewCustomerForm, newCustomerData, setNewCustomerData,
   onCreateCustomer, onSubmit, onClose,
 }: VisitFormModalProps) {
@@ -40,7 +41,8 @@ export function VisitFormModal({
           <div className="space-y-4">
             {!editing && (
               <VisitCustomerPicker
-                customers={customers}
+                selectedCustomerName={selectedCustomerName}
+                setSelectedCustomerName={setSelectedCustomerName}
                 formData={formData}
                 setFormData={setFormData}
                 customerSearch={customerSearch}
@@ -57,19 +59,14 @@ export function VisitFormModal({
             {editing && (
               <div>
                 <label className="block text-sm font-medium text-gray-700">{t('customer')}</label>
-                <select
-                  value={formData.customerId}
-                  onChange={(e) => setFormData({ ...formData, customerId: e.target.value })}
+                <input
+                  type="text"
+                  value={selectedCustomerName}
                   className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 bg-white"
                   style={{ color: '#000000' }}
-                  required
+                  readOnly
                   disabled
-                >
-                  <option value="">{t('selectCustomerLabel')}</option>
-                  {customers.map(c => (
-                    <option key={c.id} value={c.id}>{c.name} {c.surname} - {c.phone}</option>
-                  ))}
-                </select>
+                />
               </div>
             )}
             <div>

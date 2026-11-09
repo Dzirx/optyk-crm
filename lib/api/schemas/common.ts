@@ -64,3 +64,39 @@ export const trimmedOrNull = z
   .string()
   .nullish()
   .transform((v) => (v === undefined ? undefined : v?.trim() || null));
+
+// --- Parametry listy z paginacją (query string) ---
+
+export const DEFAULT_PAGE_SIZE = 50;
+export const MAX_PAGE_SIZE = 200;
+const BAD_PAGE = 'Nieprawidłowy numer strony (oczekiwano liczby całkowitej od 1)';
+const BAD_PAGE_SIZE = `Nieprawidłowy rozmiar strony (oczekiwano liczby całkowitej od 1 do ${MAX_PAGE_SIZE})`;
+
+/** `page` w query: brak = lista bez paginacji (stary kształt odpowiedzi). */
+export const pageParam = z
+  .string({ error: BAD_PAGE })
+  .regex(/^\d{1,9}$/, BAD_PAGE)
+  .transform(Number)
+  .refine((n) => n >= 1, BAD_PAGE)
+  .optional();
+
+export const pageSizeParam = z
+  .string({ error: BAD_PAGE_SIZE })
+  .regex(/^\d{1,9}$/, BAD_PAGE_SIZE)
+  .transform(Number)
+  .refine((n) => n >= 1 && n <= MAX_PAGE_SIZE, BAD_PAGE_SIZE)
+  .optional()
+  .transform((n) => n ?? DEFAULT_PAGE_SIZE);
+
+/** Szukana fraza: po trim, pusta = brak filtra, max 100 znaków. */
+export const searchParam = z
+  .string()
+  .transform((v) => v.trim())
+  .refine((v) => v.length <= 100, 'Szukana fraza może mieć najwyżej 100 znaków')
+  .transform((v) => v || undefined)
+  .optional();
+
+/** Wartości z URLSearchParams → obiekt dla schematu (brak = undefined). */
+export function queryObject(sp: URLSearchParams, keys: string[]): Record<string, string | undefined> {
+  return Object.fromEntries(keys.map((k) => [k, sp.get(k) ?? undefined]));
+}

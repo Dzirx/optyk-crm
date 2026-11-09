@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/language-context';
+import { Pagination } from '@/components/pagination';
+import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 import { formatPhone as formatPhoneDisplay } from '@/lib/phone';
 
 interface Customer {
@@ -16,6 +18,7 @@ interface Customer {
   visitCount?: number;
 }
 
+const PAGE_SIZE = 50;
 
 export default function CustomersPage() {
   const { t } = useLanguage();
@@ -23,6 +26,17 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<'all' | 'consented' | 'not-consented'>('all');
+  const [search, setSearch] = useState('');
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState({ all: 0, consented: 0, notConsented: 0 });
+  // Zmiana frazy albo filtra wraca na stronę 1 (strona jest powiązana z kluczem wyszukiwania).
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
+  const searchKey = `${debouncedSearch}|${filter}`;
+  const [pageState, setPageState] = useState({ key: searchKey, page: 1 });
+  const page = pageState.key === searchKey ? pageState.page : 1;
+  const setPage = (p: number) => setPageState({ key: searchKey, page: p });
+  const [reloadKey, setReloadKey] = useState(0);
+  const requestSeq = useRef(0);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
 
@@ -37,27 +51,42 @@ export default function CustomersPage() {
   const [formLoading, setFormLoading] = useState(false);
 
   useEffect(() => {
-    fetchCustomers();
-  }, []);
+    const seq = ++requestSeq.current;
+    (async () => {
+      try {
+        const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+        if (debouncedSearch) params.set('q', debouncedSearch);
+        if (filter !== 'all') params.set('smsConsent', filter === 'consented' ? 'true' : 'false');
+        const response = await fetch(`/api/customers?${params}`);
+        const data = await response.json();
+        if (seq !== requestSeq.current) return; // nowsze żądanie wyprzedziło to
 
-  const fetchCustomers = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch('/api/customers');
-      const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to fetch customers');
+        }
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to fetch customers');
+        // Strona zniknęła (np. po usunięciu ostatniego klienta na niej): wracamy o jedną.
+        const lastPage = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
+        }
+
+        setCustomers(data.customers || []);
+        setTotal(data.total);
+        setCounts(data.counts);
+        setError('');
+        setLoading(false);
+      } catch (err) {
+        if (seq !== requestSeq.current) return;
+        setError(err instanceof Error ? err.message : 'Failed to fetch customers');
+        setLoading(false);
       }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPage zależy tylko od searchKey
+  }, [page, debouncedSearch, filter, reloadKey]);
 
-      setCustomers(data.customers || []);
-      setError('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch customers');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const fetchCustomers = () => setReloadKey((k) => k + 1);
 
   const handleAddCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -151,14 +180,29 @@ export default function CustomersPage() {
     });
   };
 
-  const exportToCSV = () => {
-    if (filteredCustomers.length === 0) {
+  const exportToCSV = async () => {
+    if (total === 0) {
       alert(t('noCustomersToExport'));
       return;
     }
 
+    // Eksport obejmuje wszystkich pasujących klientów (bez `page`), nie tylko bieżącą stronę.
+    let all: Customer[];
+    try {
+      const params = new URLSearchParams();
+      if (debouncedSearch) params.set('q', debouncedSearch);
+      if (filter !== 'all') params.set('smsConsent', filter === 'consented' ? 'true' : 'false');
+      const response = await fetch(`/api/customers?${params}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to fetch customers');
+      all = data.customers || [];
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to fetch customers');
+      return;
+    }
+
     const headers = [t('name'), t('surname'), t('phone'), t('email'), t('smsConsent'), t('visitsCount')];
-    const rows = filteredCustomers.map(c => [
+    const rows = all.map(c => [
       c.name,
       c.surname,
       c.phone,
@@ -185,13 +229,6 @@ export default function CustomersPage() {
     document.body.removeChild(link);
   };
 
-  const filteredCustomers = customers.filter(c => {
-    if (filter === 'all') return true;
-    if (filter === 'consented') return c.smsConsent === true;
-    if (filter === 'not-consented') return c.smsConsent === false;
-    return true;
-  });
-
   return (
     <div className="px-4 py-6 sm:px-0">
       <div className="border-b border-gray-200 pb-5 flex justify-between items-center">
@@ -205,7 +242,7 @@ export default function CustomersPage() {
           <button
             onClick={exportToCSV}
             className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
-            disabled={filteredCustomers.length === 0}
+            disabled={total === 0}
           >
             {t('exportCSV')}
           </button>
@@ -218,25 +255,36 @@ export default function CustomersPage() {
         </div>
       </div>
 
+      {/* Search */}
+      <div className="mt-6">
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder={t('searchCustomersList')}
+          className="w-full border border-gray-300 rounded-lg px-4 py-2 text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        />
+      </div>
+
       {/* Filter */}
-      <div className="mt-6 flex gap-2">
+      <div className="mt-4 flex gap-2">
         <button
           onClick={() => setFilter('all')}
           className={`px-4 py-2 rounded-md ${filter === 'all' ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-700'}`}
         >
-          {t('all')} ({customers.length})
+          {t('all')} ({counts.all})
         </button>
         <button
           onClick={() => setFilter('consented')}
           className={`px-4 py-2 rounded-md ${filter === 'consented' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'}`}
         >
-          {t('smsConsentFilter')} ({customers.filter(c => c.smsConsent).length})
+          {t('smsConsentFilter')} ({counts.consented})
         </button>
         <button
           onClick={() => setFilter('not-consented')}
           className={`px-4 py-2 rounded-md ${filter === 'not-consented' ? 'bg-red-600 text-white' : 'bg-gray-200 text-gray-700'}`}
         >
-          {t('noConsentFilter')} ({customers.filter(c => !c.smsConsent).length})
+          {t('noConsentFilter')} ({counts.notConsented})
         </button>
       </div>
 
@@ -251,7 +299,7 @@ export default function CustomersPage() {
       <div className="mt-6 bg-white shadow overflow-hidden rounded-lg">
         {loading ? (
           <div className="p-8 text-center text-gray-500">{t('loadingCustomers')}</div>
-        ) : filteredCustomers.length === 0 ? (
+        ) : customers.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
             {t('noCustomersFound')}
           </div>
@@ -268,7 +316,7 @@ export default function CustomersPage() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredCustomers.map((customer) => (
+              {customers.map((customer) => (
                 <tr key={customer.id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {customer.name} {customer.surname}
@@ -315,6 +363,8 @@ export default function CustomersPage() {
           </table>
         )}
       </div>
+
+      {total > 0 && <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />}
 
       {/* Add/Edit Modal */}
       {(showAddModal || editingCustomer) && (

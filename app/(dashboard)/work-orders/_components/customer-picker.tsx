@@ -1,13 +1,14 @@
 'use client';
 
-import type { Dispatch, SetStateAction } from 'react';
+import { useState, type Dispatch, type SetStateAction } from 'react';
+import { useCustomerSearch, type CustomerHit } from '@/lib/hooks/use-customer-search';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { formatPhone } from '@/lib/phone';
 import { emptyNewCustomer } from '../_lib/helpers';
-import type { Customer, NewCustomerForm } from '../_lib/types';
+import type { NewCustomerForm } from '../_lib/types';
 
 interface CustomerPickerProps {
-  customers: Customer[];
+  selectedCustomerName: string;
   customerId: string;
   customerSearch: string;
   setCustomerSearch: (value: string) => void;
@@ -15,16 +16,19 @@ interface CustomerPickerProps {
   setShowNewCustomerForm: (value: boolean) => void;
   newCustomer: NewCustomerForm;
   setNewCustomer: Dispatch<SetStateAction<NewCustomerForm>>;
-  onSelectCustomer: (customer: Customer) => void;
+  onSelectCustomer: (customer: CustomerHit) => void;
   onClearCustomer: () => void;
 }
 
 /** Wybór klienta z listy albo formularz nowego klienta. */
 export function CustomerPicker({
-  customers, customerId, customerSearch, setCustomerSearch, showNewCustomerForm, setShowNewCustomerForm,
+  selectedCustomerName, customerId, customerSearch, setCustomerSearch, showNewCustomerForm, setShowNewCustomerForm,
   newCustomer, setNewCustomer, onSelectCustomer, onClearCustomer,
 }: CustomerPickerProps) {
   const { t } = useLanguage();
+  // Lista wyników otwarta tylko podczas pisania; po wyborze klienta zamknięta.
+  const [open, setOpen] = useState(false);
+  const { results, loading } = useCustomerSearch(customerSearch, open);
 
   return (
     !showNewCustomerForm ? (
@@ -34,29 +38,29 @@ export function CustomerPicker({
             type="text"
             placeholder={t('searchCustomers')}
             value={customerSearch}
-            onChange={e => setCustomerSearch(e.target.value)}
+            onChange={e => { setCustomerSearch(e.target.value); setOpen(true); }}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:ring-2 focus:ring-blue-500"
             autoComplete="off"
           />
-          {customerSearch && (
+          {open && customerSearch.trim() && (
             <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-              {customers
-                .filter(c => {
-                  const q = customerSearch.toLowerCase();
-                  return `${c.name} ${c.surname}`.toLowerCase().includes(q) || c.phone.includes(q);
-                })
-                .slice(0, 5)
-                .map(c => (
+              {loading ? (
+                <div className="px-3 py-2 text-sm text-gray-500">{t('searching')}</div>
+              ) : results.length === 0 ? (
+                <div className="px-3 py-2 text-sm text-gray-500">{t('noCustomerResults')}</div>
+              ) : (
+                results.map(c => (
                   <button
                     key={c.id}
                     type="button"
-                    onClick={() => onSelectCustomer(c)}
+                    onClick={() => { onSelectCustomer(c); setOpen(false); }}
                     className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-gray-100 last:border-b-0"
                   >
                     <div className="font-medium text-gray-900">{c.name} {c.surname}</div>
                     <div className="text-sm text-gray-500">{formatPhone(c.phone)}</div>
                   </button>
-                ))}
+                ))
+              )}
             </div>
           )}
         </div>
@@ -64,11 +68,11 @@ export function CustomerPicker({
         {customerId && (
           <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-lg flex items-center justify-between">
             <span className="text-sm text-green-900">
-              {t('selectedCustomer')} {customers.find(c => c.id === customerId)?.name} {customers.find(c => c.id === customerId)?.surname}
+              {t('selectedCustomer')} {selectedCustomerName}
             </span>
             <button
               type="button"
-              onClick={onClearCustomer}
+              onClick={() => { onClearCustomer(); setOpen(false); }}
               className="text-red-600 hover:text-red-800 text-sm"
             >
               {t('clear')}

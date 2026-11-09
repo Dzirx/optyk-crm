@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { pageParam, pageSizeParam, searchParam } from './common';
 
 const REQUIRED = 'Imię, nazwisko i telefon są wymagane';
 const PHONE_RE = /^\+?[1-9]\d{1,14}$/; // E.164
@@ -30,4 +31,14 @@ export const updateCustomerSchema = z.object({
   phone: z.string().nullish().refine((v) => !v || PHONE_RE.test(v), 'Nieprawidłowy numer telefonu'),
   email,
   smsConsent: z.boolean().optional(),
+});
+
+// GET /api/customers: bez `page` zwraca całą listę (stary kształt), z `page` jedną stronę.
+// `smsConsent` zawęża listę (zakładki „ze zgodą” / „bez zgody”); `withVisits=1` dodaje tablicę wizyt.
+export const listCustomersQuerySchema = z.object({
+  page: pageParam,
+  pageSize: pageSizeParam,
+  q: searchParam,
+  smsConsent: z.enum(['true', 'false'], { error: 'Nieprawidłowa wartość „smsConsent” (true lub false)' }).optional(),
+  withVisits: z.string().optional(),
 });

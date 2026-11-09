@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { MONEY, ValidationError, optionalDate } from '@/lib/api/validation';
-import { fromValidator, optDate, optNum, patchDate, patchNum, text } from './common';
+import { fromValidator, optDate, optNum, pageParam, pageSizeParam, patchDate, patchNum, searchParam, text } from './common';
 
 export const WORK_ORDER_STATUSES = ['pending', 'ready', 'completed'];
 
@@ -91,4 +91,12 @@ export const updateWorkOrderSchema = z.object({
   deposit: patchNum(DEPOSIT),
   notes: fromValidator((v) => text(v, 10_000), true),
   items,
+});
+
+// GET /api/work-orders: bez `page` zwraca całą listę (stary kształt), z `page` jedną stronę.
+export const listWorkOrdersQuerySchema = z.object({
+  page: pageParam,
+  pageSize: pageSizeParam,
+  q: searchParam,
+  status: z.enum(['pending', 'ready', 'completed'], { error: 'Nieprawidłowy status zlecenia' }).optional(),
 });

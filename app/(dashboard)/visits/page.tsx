@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { isoToLocalInput, localInputToIso, monthRangeIso, toLocalDateStr } from './_lib/dates';
 import { emptyFormData, emptyNewCustomerData } from './_lib/forms';
-import type { Customer, NewCustomerData, Visit, VisitFormData } from './_lib/types';
+import type { NewCustomerData, Visit, VisitFormData } from './_lib/types';
 import { VisitCalendar } from './_components/visit-calendar';
 import { VisitFormModal } from './_components/visit-form-modal';
 import { VisitList } from './_components/visit-list';
@@ -16,7 +16,6 @@ export default function VisitsPage() {
   const filterCustomerId = searchParams?.get('customerId');
 
   const [visits, setVisits] = useState<Visit[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -28,6 +27,8 @@ export default function VisitsPage() {
   const [formLoading, setFormLoading] = useState(false);
   const [showNewCustomerForm, setShowNewCustomerForm] = useState(false);
   const [customerSearch, setCustomerSearch] = useState('');
+  // Nazwa wybranego klienta: może go nie być w wynikach wyszukiwania (np. przy edycji wizyty).
+  const [selectedCustomerName, setSelectedCustomerName] = useState('');
   const [newCustomerData, setNewCustomerData] = useState<NewCustomerData>(emptyNewCustomerData());
 
   // Pobieramy tylko to, co widać: miesiąc z kalendarza albo wizyty jednego klienta (?customerId=).
@@ -68,22 +69,6 @@ export default function VisitsPage() {
     fetchVisits();
   }, [fetchVisits]);
 
-  useEffect(() => {
-    fetchCustomers();
-  }, []);
-
-  const fetchCustomers = async () => {
-    try {
-      const response = await fetch('/api/customers');
-      const data = await response.json();
-      if (response.ok) {
-        setCustomers(data.customers || []);
-      }
-    } catch (err) {
-      console.error('Failed to fetch customers:', err);
-    }
-  };
-
   const handleCreateCustomer = async () => {
     if (!newCustomerData.name || !newCustomerData.surname || !newCustomerData.phone) {
       setFormError(t('nameRequiredError'));
@@ -104,11 +89,9 @@ export default function VisitsPage() {
         throw new Error(data.error || 'Failed to create customer');
       }
 
-      // Refresh customers list
-      await fetchCustomers();
-
       // Select the new customer
       setFormData({ ...formData, customerId: data.customer.id });
+      setSelectedCustomerName(`${data.customer.name} ${data.customer.surname}`);
 
       // Reset and hide new customer form
       setNewCustomerData(emptyNewCustomerData());
@@ -238,6 +221,7 @@ export default function VisitsPage() {
 
   const openEditModal = (visit: Visit) => {
     setEditingVisit(visit);
+    setSelectedCustomerName(visit.customerName);
     setFormData({
       customerId: visit.customerId,
       visitDate: isoToLocalInput(visit.visitDate),
@@ -316,6 +300,7 @@ export default function VisitsPage() {
     setFormError('');
     setShowNewCustomerForm(false);
     setCustomerSearch('');
+    setSelectedCustomerName('');
     setNewCustomerData(emptyNewCustomerData());
   };
 
@@ -380,7 +365,8 @@ export default function VisitsPage() {
       {(showAddModal || editingVisit) && (
         <VisitFormModal
           editing={!!editingVisit}
-          customers={customers}
+          selectedCustomerName={selectedCustomerName}
+          setSelectedCustomerName={setSelectedCustomerName}
           formData={formData}
           setFormData={setFormData}
           formError={formError}

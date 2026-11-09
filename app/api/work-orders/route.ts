@@ -1,31 +1,58 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { withBusiness } from '@/lib/api/handler';
+import type { Prisma } from '@prisma/client';
+import { withBusiness, zodMessage } from '@/lib/api/handler';
+import { queryObject } from '@/lib/api/schemas/common';
+import { workOrderSearchWhere } from '@/lib/api/search';
 import { customerBelongsTo, inventoryBelongsTo, inventoryIdsFromItems } from '@/lib/api/ownership';
-import { createWorkOrderSchema } from '@/lib/api/schemas/work-orders';
+import { createWorkOrderSchema, listWorkOrdersQuerySchema } from '@/lib/api/schemas/work-orders';
 import { NOT_FOUND_INVENTORY, assertDepositFits, resolveTotal } from '@/lib/work-orders/amounts';
 import { addLinks, applyAdjustments, orderedInventoryIds } from '@/lib/work-orders/inventory';
 import { assertOrderNumberFree, lockOrderNumbering, nextOrderNumber } from '@/lib/work-orders/order-number';
 
-// GET /api/work-orders - zlecenia salonu
+// GET /api/work-orders - zlecenia salonu.
+// Parametry (opcjonalne): q (numer zlecenia, imię i nazwisko klienta, telefon), status, page + pageSize
+// (domyślnie 50, max 200). Bez `page`: cała lista w starym kształcie `{ workOrders }`.
+// Z `page`: `{ workOrders, total, page, pageSize }`.
 export const GET = withBusiness(
-  async ({ business }) => {
-    const orders = await db.workOrder.findMany({
-      where: { businessId: business.id },
+  async ({ req, business }) => {
+    const parsed = listWorkOrdersQuerySchema.safeParse(
+      queryObject(req.nextUrl.searchParams, ['page', 'pageSize', 'q', 'status']),
+    );
+    if (!parsed.success) return NextResponse.json({ error: zodMessage(parsed.error) }, { status: 400 });
+    const { page, pageSize, q, status } = parsed.data;
+
+    // businessId zawsze w warunku: żaden filtr ani strona nie wychodzi poza salon.
+    const where: Prisma.WorkOrderWhereInput = {
+      businessId: business.id,
+      ...(status ? { status } : {}),
+      AND: workOrderSearchWhere(q),
+    };
+    const query = {
+      where,
       include: {
         customer: true,
-        items: { orderBy: { id: 'asc' } },
+        items: { orderBy: { id: 'asc' as const } },
       },
-      orderBy: { receivedAt: 'desc' },
-    });
+      // `id` rozstrzyga remisy, żeby strony nie nakładały się na siebie.
+      orderBy: [{ receivedAt: 'desc' as const }, { createdAt: 'desc' as const }, { id: 'desc' as const }],
+    };
+    const shape = (orders: Awaited<ReturnType<typeof db.workOrder.findMany<typeof query>>>) =>
+      orders.map((order) => ({
+        ...order,
+        customerName: `${order.customer.name} ${order.customer.surname}`,
+        customerPhone: order.customer.phone,
+      }));
 
-    const workOrders = orders.map((order) => ({
-      ...order,
-      customerName: `${order.customer.name} ${order.customer.surname}`,
-      customerPhone: order.customer.phone,
-    }));
+    if (page === undefined) {
+      return NextResponse.json({ workOrders: shape(await db.workOrder.findMany(query)) });
+    }
 
-    return NextResponse.json({ workOrders });
+    const [total, orders] = await db.$transaction([
+      db.workOrder.count({ where }),
+      db.workOrder.findMany({ ...query, skip: (page - 1) * pageSize, take: pageSize }),
+    ]);
+    return NextResponse.json({ workOrders: shape(orders), total, page, pageSize });
   },
   { error: 'Nie udało się pobrać zleceń' },
 );

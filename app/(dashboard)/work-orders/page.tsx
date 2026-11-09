@@ -1,18 +1,22 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { Pagination } from '@/components/pagination';
+import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { itemsTotal, hasPrices } from '@/lib/work-orders/totals';
 import { emptyForm, emptyNewCustomer, orderToForm } from './_lib/helpers';
-import type { Customer, InventoryItem, WorkOrder } from './_lib/types';
+import type { InventoryItem, WorkOrder } from './_lib/types';
 import { OrderFormModal } from './_components/order-form-modal';
 import { OrderList } from './_components/order-list';
 import { OrderPreviewModal } from './_components/order-preview-modal';
 
+const PAGE_SIZE = 50;
+
 export default function WorkOrdersPage() {
   const { t } = useLanguage();
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [total, setTotal] = useState(0);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -25,37 +29,61 @@ export default function WorkOrdersPage() {
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
+  // Nazwa wybranego klienta: może go nie być w wynikach wyszukiwania (np. przy edycji zlecenia).
+  const [selectedCustomerName, setSelectedCustomerName] = useState('');
   const [showNewCustomerForm, setShowNewCustomerForm] = useState(false);
   const [newCustomer, setNewCustomer] = useState(emptyNewCustomer());
   const [sendingSmsId, setSendingSmsId] = useState<string | null>(null);
   const [previewOrder, setPreviewOrder] = useState<WorkOrder | null>(null);
 
 
+  // Zmiana frazy albo statusu wraca na stronę 1 (strona jest powiązana z kluczem wyszukiwania).
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
+  const searchKey = `${debouncedSearch}|${filter}`;
+  const [pageState, setPageState] = useState({ key: searchKey, page: 1 });
+  const page = pageState.key === searchKey ? pageState.page : 1;
+  const setPage = (p: number) => setPageState({ key: searchKey, page: p });
+  const [reloadKey, setReloadKey] = useState(0);
+  const requestSeq = useRef(0);
+
   useEffect(() => {
-    fetchWorkOrders();
-    fetchCustomers();
     fetchInventory();
   }, []);
 
-  async function fetchWorkOrders() {
-    try {
-      const res = await fetch('/api/work-orders');
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setWorkOrders(data.workOrders || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error');
-    } finally {
-      setLoading(false);
-    }
-  }
+  useEffect(() => {
+    const seq = ++requestSeq.current;
+    (async () => {
+      try {
+        const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+        if (debouncedSearch) params.set('q', debouncedSearch);
+        if (filter !== 'all') params.set('status', filter);
+        const res = await fetch(`/api/work-orders?${params}`);
+        const data = await res.json();
+        if (seq !== requestSeq.current) return; // nowsze żądanie wyprzedziło to
+        if (!res.ok) throw new Error(data.error);
 
-  async function fetchCustomers() {
-    try {
-      const res = await fetch('/api/customers');
-      const data = await res.json();
-      setCustomers(data.customers || []);
-    } catch {}
+        // Strona zniknęła (np. po usunięciu ostatniego zlecenia na niej): wracamy o jedną.
+        const lastPage = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
+        }
+
+        setWorkOrders(data.workOrders || []);
+        setTotal(data.total);
+      } catch (err) {
+        if (seq !== requestSeq.current) return;
+        setError(err instanceof Error ? err.message : 'Error');
+      } finally {
+        if (seq === requestSeq.current) setLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPage zależy tylko od searchKey
+  }, [page, debouncedSearch, filter, reloadKey]);
+
+  /** Pobiera ponownie bieżącą stronę (po dodaniu, edycji, usunięciu, zmianie statusu, SMS). */
+  async function fetchWorkOrders() {
+    setReloadKey((k) => k + 1);
   }
 
   async function fetchInventory() {
@@ -72,6 +100,7 @@ export default function WorkOrdersPage() {
     setForm(emptyForm());
     setTotalManual(false);
     setCustomerSearch('');
+    setSelectedCustomerName('');
     setShowNewCustomerForm(false);
     setNewCustomer(emptyNewCustomer());
     setShowModal(true);
@@ -86,6 +115,8 @@ export default function WorkOrdersPage() {
       Math.round(Number(order.totalAmount) * 100) !== Math.round(itemsTotal(order.items) * 100)
     );
     setForm(orderToForm(order));
+    setCustomerSearch('');
+    setSelectedCustomerName(order.customerName);
     setShowModal(true);
   }
 
@@ -126,7 +157,6 @@ export default function WorkOrdersPage() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
         customerId = data.customer.id;
-        await fetchCustomers();
       }
 
       if (!customerId) { setError(t('pleaseSelectCustomer')); setSubmitting(false); return; }
@@ -190,13 +220,6 @@ export default function WorkOrdersPage() {
     }
   }
 
-  const filtered = workOrders
-    .filter(o => filter === 'all' || o.status === filter)
-    .filter(o => {
-      if (!search.trim()) return true;
-      const q = search.toLowerCase();
-      return o.customerName.toLowerCase().includes(q) || o.customerPhone.includes(q);
-    });
   if (loading) return <div className="p-6">{t('loadingWorkOrders')}</div>;
 
   return (
@@ -220,7 +243,7 @@ export default function WorkOrdersPage() {
       )}
 
       <OrderList
-        orders={filtered}
+        orders={workOrders}
         search={search}
         onSearchChange={setSearch}
         filter={filter}
@@ -232,6 +255,8 @@ export default function WorkOrdersPage() {
         onStatusChange={handleStatusChange}
         onSendReviewSms={handleSendReviewSms}
       />
+
+      {total > 0 && <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />}
 
       {previewOrder && (
         <OrderPreviewModal
@@ -248,7 +273,8 @@ export default function WorkOrdersPage() {
           submitting={submitting}
           form={form}
           setForm={setForm}
-          customers={customers}
+          selectedCustomerName={selectedCustomerName}
+          setSelectedCustomerName={setSelectedCustomerName}
           inventoryItems={inventoryItems}
           customerSearch={customerSearch}
           setCustomerSearch={setCustomerSearch}

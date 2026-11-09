@@ -13,7 +13,7 @@ export ROOT_USER_EMAIL=root@test.local ROOT_USER_PASSWORD=Root-test-123
 export BASE="http://127.0.0.1:${E2E_PORT}"
 
 SUITES=("$@")
-[ ${#SUITES[@]} -eq 0 ] && SUITES=(idor fixes trial license api)
+[ ${#SUITES[@]} -eq 0 ] && SUITES=(idor fixes trial license api pagination)
 
 e2e_init
 db_up

@@ -5,7 +5,7 @@ import { useLanguage } from '@/lib/i18n/language-context';
 import { STATUSES } from '../_lib/constants';
 import { emptyItem } from '../_lib/helpers';
 import type {
-  Customer, InventoryItem, NewCustomerForm, SetItemField, SetItemFields, WorkOrderForm,
+  InventoryItem, NewCustomerForm, SetItemField, SetItemFields, WorkOrderForm,
 } from '../_lib/types';
 import { CustomerPicker } from './customer-picker';
 import { OrderItemEditor } from './order-item-editor';
@@ -16,7 +16,8 @@ interface OrderFormModalProps {
   submitting: boolean;
   form: WorkOrderForm;
   setForm: Dispatch<SetStateAction<WorkOrderForm>>;
-  customers: Customer[];
+  selectedCustomerName: string;
+  setSelectedCustomerName: (value: string) => void;
   inventoryItems: InventoryItem[];
   customerSearch: string;
   setCustomerSearch: (value: string) => void;
@@ -36,7 +37,7 @@ interface OrderFormModalProps {
 }
 
 export function OrderFormModal({
-  editing, error, submitting, form, setForm, customers, inventoryItems,
+  editing, error, submitting, form, setForm, selectedCustomerName, setSelectedCustomerName, inventoryItems,
   customerSearch, setCustomerSearch, showNewCustomerForm, setShowNewCustomerForm, newCustomer, setNewCustomer,
   totalManual, setTotalManual, itemsSum, autoTotal, effectiveTotal, amountToPay, onSubmit, onClose,
 }: OrderFormModalProps) {
@@ -89,7 +90,7 @@ export function OrderFormModal({
               </label>
 
               <CustomerPicker
-                customers={customers}
+                selectedCustomerName={selectedCustomerName}
                 customerId={form.customerId}
                 customerSearch={customerSearch}
                 setCustomerSearch={setCustomerSearch}
@@ -100,8 +101,9 @@ export function OrderFormModal({
                 onSelectCustomer={c => {
                   setForm(prev => ({ ...prev, customerId: c.id }));
                   setCustomerSearch(`${c.name} ${c.surname} — ${c.phone}`);
+                  setSelectedCustomerName(`${c.name} ${c.surname}`);
                 }}
-                onClearCustomer={() => { setForm(prev => ({ ...prev, customerId: '' })); setCustomerSearch(''); }}
+                onClearCustomer={() => { setForm(prev => ({ ...prev, customerId: '' })); setCustomerSearch(''); setSelectedCustomerName(''); }}
               />
             </div>
 
