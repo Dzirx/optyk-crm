@@ -49,3 +49,15 @@ export const updateVisitSchema = z.object({
 export const sendVisitSmsSchema = z.object({
   smsType: z.enum(['reminder', 'review'], { error: 'Typ SMS musi być "reminder" lub "review"' }),
 });
+
+// GET /api/visits: filtry w query string. `from` włącznie, `to` wyłącznie (ISO z datą i godziną).
+// Bez parametrów zwraca wszystkie wizyty salonu.
+const BAD_FROM = 'Nieprawidłowa data „from” (oczekiwano daty ISO z godziną)';
+const BAD_TO = 'Nieprawidłowa data „to” (oczekiwano daty ISO z godziną)';
+const BAD_CUSTOMER_ID = 'Nieprawidłowe ID klienta';
+
+export const listVisitsQuerySchema = z.object({
+  from: z.iso.datetime({ offset: true, error: BAD_FROM }).transform((v) => new Date(v)).optional(),
+  to: z.iso.datetime({ offset: true, error: BAD_TO }).transform((v) => new Date(v)).optional(),
+  customerId: z.string({ error: BAD_CUSTOMER_ID }).regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, BAD_CUSTOMER_ID).optional(),
+});

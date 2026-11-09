@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/language-context';
-import { isoToLocalInput, localInputToIso, toLocalDateStr } from './_lib/dates';
+import { isoToLocalInput, localInputToIso, monthRangeIso, toLocalDateStr } from './_lib/dates';
 import { emptyFormData, emptyNewCustomerData } from './_lib/forms';
 import type { Customer, NewCustomerData, Visit, VisitFormData } from './_lib/types';
 import { VisitCalendar } from './_components/visit-calendar';
@@ -30,16 +30,25 @@ export default function VisitsPage() {
   const [customerSearch, setCustomerSearch] = useState('');
   const [newCustomerData, setNewCustomerData] = useState<NewCustomerData>(emptyNewCustomerData());
 
-  useEffect(() => {
-    fetchVisits();
-    fetchCustomers();
-  }, []);
+  // Pobieramy tylko to, co widać: miesiąc z kalendarza albo wizyty jednego klienta (?customerId=).
+  const month = selectedDate.slice(0, 7);
+  const requestSeq = useRef(0);
 
-  const fetchVisits = async () => {
+  const fetchVisits = useCallback(async () => {
+    const seq = ++requestSeq.current;
     try {
       setLoading(true);
-      const response = await fetch('/api/visits');
+      const params = new URLSearchParams();
+      if (filterCustomerId) {
+        params.set('customerId', filterCustomerId);
+      } else {
+        const range = monthRangeIso(month + '-01');
+        params.set('from', range.from);
+        params.set('to', range.to);
+      }
+      const response = await fetch(`/api/visits?${params}`);
       const data = await response.json();
+      if (seq !== requestSeq.current) return; // nowsze żądanie wyprzedziło to
 
       if (!response.ok) {
         throw new Error(data.error || 'Failed to fetch visits');
@@ -48,11 +57,20 @@ export default function VisitsPage() {
       setVisits(data.visits || []);
       setError('');
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       setError(err instanceof Error ? err.message : 'Failed to fetch visits');
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
-  };
+  }, [month, filterCustomerId]);
+
+  useEffect(() => {
+    fetchVisits();
+  }, [fetchVisits]);
+
+  useEffect(() => {
+    fetchCustomers();
+  }, []);
 
   const fetchCustomers = async () => {
     try {

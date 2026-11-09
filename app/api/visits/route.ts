@@ -1,32 +1,40 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { withBusiness } from '@/lib/api/handler';
+import { withBusiness, zodMessage } from '@/lib/api/handler';
 import { customerBelongsTo } from '@/lib/api/ownership';
-import { createVisitSchema } from '@/lib/api/schemas/visits';
+import { createVisitSchema, listVisitsQuerySchema } from '@/lib/api/schemas/visits';
 
 // GET /api/visits - wizyty salonu razem z danymi klienta
+// Parametry (opcjonalne): from (włącznie), to (wyłącznie), customerId. Bez nich: wszystkie wizyty.
 export const GET = withBusiness(
-  async ({ business }) => {
-    const customers = await db.customer.findMany({
-      where: { businessId: business.id },
-      include: {
-        visits: {
-          orderBy: { visitDate: 'desc' },
-          include: { review: true },
-        },
+  async ({ req, business }) => {
+    const sp = req.nextUrl.searchParams;
+    const parsed = listVisitsQuerySchema.safeParse({
+      from: sp.get('from') ?? undefined,
+      to: sp.get('to') ?? undefined,
+      customerId: sp.get('customerId') ?? undefined,
+    });
+    if (!parsed.success) return NextResponse.json({ error: zodMessage(parsed.error) }, { status: 400 });
+    const { from, to, customerId } = parsed.data;
+
+    // Zawsze w obrębie salonu: cudze customerId daje pustą listę.
+    const found = await db.visit.findMany({
+      where: {
+        customer: { businessId: business.id },
+        ...(customerId ? { customerId } : {}),
+        ...(from || to ? { visitDate: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } } : {}),
       },
+      include: { customer: true, review: true },
+      orderBy: { visitDate: 'desc' },
     });
 
-    const visits = customers.flatMap((customer) =>
-      customer.visits.map((visit) => ({
-        ...visit,
-        customerName: `${customer.name} ${customer.surname}`,
-        customerPhone: customer.phone,
-        customerEmail: customer.email,
-        smsConsent: customer.smsConsent,
-      })),
-    );
-    visits.sort((a, b) => new Date(b.visitDate).getTime() - new Date(a.visitDate).getTime());
+    const visits = found.map(({ customer, ...visit }) => ({
+      ...visit,
+      customerName: `${customer.name} ${customer.surname}`,
+      customerPhone: customer.phone,
+      customerEmail: customer.email,
+      smsConsent: customer.smsConsent,
+    }));
 
     return NextResponse.json({ visits });
   },

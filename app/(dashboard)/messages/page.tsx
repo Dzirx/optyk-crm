@@ -65,7 +65,7 @@ export default function MessagesPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    fetch('/api/customers')
+    fetch('/api/customers?withVisits=1')
       .then(r => r.json())
       .then(data => setCustomers(data.customers || []))
       .catch(() => {})

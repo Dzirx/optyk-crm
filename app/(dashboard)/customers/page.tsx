@@ -13,7 +13,7 @@ interface Customer {
   email: string | null;
   smsConsent: boolean;
   createdAt: string;
-  visits?: any[];
+  visitCount?: number;
 }
 
 
@@ -164,7 +164,7 @@ export default function CustomersPage() {
       c.phone,
       c.email || '',
       c.smsConsent ? t('yes') : t('no'),
-      c.visits?.length || 0
+      c.visitCount || 0
     ]);
 
     const csvContent = [
@@ -285,7 +285,7 @@ export default function CustomersPage() {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {customer.visits?.length || 0}
+                    {customer.visitCount || 0}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     <div className="flex gap-2">

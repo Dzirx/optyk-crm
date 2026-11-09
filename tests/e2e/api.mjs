@@ -180,6 +180,43 @@ await run(async () => {
   r = await A.c.req('GET', '/api/admin/businesses');
   check(r.status === 403, `salon na trasie admina → ${r.status}`);
 
+  section('GET /api/customers: visitCount zamiast visits');
+  r = await A.c.req('GET', '/api/customers');
+  const listed = r.json.customers.find((c) => c.id === A.cust.id);
+  check(r.status === 200 && listed && listed.visitCount === 1 && !('visits' in listed) && !('_count' in listed), `lista klientów: visitCount=${listed?.visitCount}, bez visits`, r.json);
+  r = await A.c.req('GET', '/api/customers?withVisits=1');
+  const withV = r.json.customers.find((c) => c.id === A.cust.id);
+  check(Array.isArray(withV?.visits) && withV.visits.length === 1 && withV.visitCount === 1, 'withVisits=1 dodaje tablicę visits');
+
+  section('GET /api/visits: zakres dat, customerId, walidacja');
+  const mk = async (iso) => (await A.c.req('POST', '/api/visits', { customerId: A.cust.id, visitDate: iso })).json.visit;
+  const vFeb0 = await mk('2027-02-01T00:00:00.000Z'); // dokładnie na granicy `to`
+  const vJan31 = await mk('2027-01-31T23:59:59.000Z');
+  const ids = (res) => res.json.visits.map((v) => v.id);
+  r = await A.c.req('GET', '/api/visits?from=2027-01-01T00:00:00.000Z&to=2027-02-01T00:00:00.000Z');
+  check(r.status === 200 && ids(r).length === 2 && ids(r).includes(A.visit.id) && ids(r).includes(vJan31.id) && !ids(r).includes(vFeb0.id), `zakres: to wyłącznie → ${ids(r).length} wizyt`);
+  check(r.json.visits[0].id === vJan31.id && r.json.visits[0].customerName.startsWith('Testowy ') && 'smsConsent' in r.json.visits[0] && 'customerEmail' in r.json.visits[0], 'zakres: kolejność malejąca i kształt pozycji');
+  r = await A.c.req('GET', '/api/visits?from=2027-02-01T00:00:00.000Z&to=2027-03-01T00:00:00.000Z');
+  check(ids(r).length === 1 && ids(r)[0] === vFeb0.id, 'zakres: from włącznie');
+  r = await A.c.req('GET', '/api/visits?from=2027-02-01T00:00:00.000Z');
+  check(ids(r).length === 1, 'tylko from');
+  r = await A.c.req('GET', '/api/visits?to=2027-01-15T10:00:00.000Z');
+  check(ids(r).length === 0, 'tylko to (wyłącznie) → pusto');
+  r = await A.c.req('GET', `/api/visits?customerId=${A.cust.id}`);
+  check(r.status === 200 && ids(r).length === 3, `customerId → ${ids(r).length} wizyt`);
+  r = await A.c.req('GET', `/api/visits?customerId=${A.cust.id}&from=2027-02-01T00:00:00.000Z&to=2027-03-01T00:00:00.000Z`);
+  check(ids(r).length === 1, 'customerId + zakres');
+  r = await A.c.req('GET', '/api/visits');
+  check(r.status === 200 && ids(r).length === 3 && !ids(r).includes(B.visit.id), 'bez parametrów: wszystkie wizyty salonu (bez cudzych)');
+  r = await A.c.req('GET', `/api/visits?customerId=${B.cust.id}`);
+  check(r.status === 200 && r.json.visits.length === 0, `cudzy customerId → pusto (${r.status})`);
+  r = await A.c.req('GET', '/api/visits?from=2020-01-01T00:00:00.000Z&to=2030-01-01T00:00:00.000Z');
+  check(!ids(r).includes(B.visit.id), 'zakres nie ujawnia cudzych wizyt');
+  for (const q of ['from=wczoraj', 'to=2027-02-01', 'from=2027-02-01T00:00:00.000Z&to=zle', 'customerId=nie-uuid', 'customerId=']) {
+    r = await A.c.req('GET', `/api/visits?${q}`);
+    check(r.status === 400 && r.json.error, `zły parametr (${q}) → ${r.status}`);
+  }
+
   section('usuwanie przez /[id]');
   r = await A.c.req('DELETE', `/api/visits/${A.visit.id}`);
   check(r.status === 200, `DELETE wizyty → ${r.status}`);
