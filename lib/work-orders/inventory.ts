@@ -9,7 +9,7 @@ export class OutOfStockError extends Error {
   }
 }
 
-export type InventoryLinks = {
+type InventoryLinks = {
   inventoryItemIdOp?: string | null;
   inventoryItemIdOl?: string | null;
   inventoryItemIdFrame?: string | null;

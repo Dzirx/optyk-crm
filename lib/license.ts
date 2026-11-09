@@ -6,7 +6,7 @@
 
 import crypto from 'crypto';
 
-export interface LicensePayload {
+interface LicensePayload {
   v: 1;
   /** id aktywacji (LicenseDevice) */
   lid: string;

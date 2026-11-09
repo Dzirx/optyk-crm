@@ -23,12 +23,6 @@ enum SmsType {
   review
 }
 
-enum ReviewStatus {
-  not_opened
-  opened
-  completed
-}
-
 // ========================================
 // Users Table
 // ========================================
@@ -126,7 +120,6 @@ model Visit {
 
   customer            Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   smsLogs             SmsLog[]
-  review              Review?
 
   @@map("visits")
 }
@@ -251,25 +244,6 @@ model SmsLog {
   visit            Visit     @relation(fields: [visitId], references: [id], onDelete: Cascade)
 
   @@map("sms_logs")
-}
-
-// ========================================
-// Reviews Table
-// ========================================
-model Review {
-  id           String        @id @default(uuid()) @db.Uuid
-  visitId      String        @unique @map("visit_id") @db.Uuid
-  linkOpened   Boolean       @default(false) @map("link_opened")
-  openedAt     DateTime?     @map("opened_at") @db.Timestamp(6)
-  rating       Int?
-  reviewText   String?       @map("review_text") @db.Text
-  reviewStatus ReviewStatus  @default(not_opened) @map("review_status")
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
-
-  visit        Visit     @relation(fields: [visitId], references: [id], onDelete: Cascade)
-
-  @@map("reviews")
 }
 
 // ========================================

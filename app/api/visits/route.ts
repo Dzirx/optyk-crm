@@ -24,7 +24,7 @@ export const GET = withBusiness(
         ...(customerId ? { customerId } : {}),
         ...(from || to ? { visitDate: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } } : {}),
       },
-      include: { customer: true, review: true },
+      include: { customer: true },
       orderBy: { visitDate: 'desc' },
     });
 

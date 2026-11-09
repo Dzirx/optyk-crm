@@ -28,7 +28,7 @@ z.config({
 
 export type Business = NonNullable<Awaited<ReturnType<typeof getUserBusiness>>>;
 
-export interface HandlerOptions {
+interface HandlerOptions {
   /** Komunikat dla 500 (bez szczegółów błędu). */
   error: string;
   /** Schemat body (POST/PATCH). Zły JSON albo zła treść → 400. */
@@ -41,7 +41,7 @@ type ParamsOf<O> = O extends { notFound: string } ? { id: string } : Record<stri
 type BodyOf<O> = O extends { body: infer S extends z.ZodType } ? z.output<S> : undefined;
 type Args<O> = { req: NextRequest; params: ParamsOf<O>; body: BodyOf<O> };
 
-export type RouteHandler<O> = (req: NextRequest, ctx: { params: Promise<ParamsOf<O>> }) => Promise<Response>;
+type RouteHandler<O> = (req: NextRequest, ctx: { params: Promise<ParamsOf<O>> }) => Promise<Response>;
 
 const json = (error: string, status: number) => NextResponse.json({ error }, { status });
 

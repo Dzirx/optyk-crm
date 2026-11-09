@@ -67,8 +67,8 @@ export const trimmedOrNull = z
 
 // --- Parametry listy z paginacją (query string) ---
 
-export const DEFAULT_PAGE_SIZE = 50;
-export const MAX_PAGE_SIZE = 200;
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
 const BAD_PAGE = 'Nieprawidłowy numer strony (oczekiwano liczby całkowitej od 1)';
 const BAD_PAGE_SIZE = `Nieprawidłowy rozmiar strony (oczekiwano liczby całkowitej od 1 do ${MAX_PAGE_SIZE})`;
 

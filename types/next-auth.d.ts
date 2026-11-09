@@ -1,4 +1,4 @@
-import { UserRole } from '@/lib/db/schema/users';
+import { UserRole } from '@/lib/types';
 import 'next-auth';
 import 'next-auth/jwt';
 

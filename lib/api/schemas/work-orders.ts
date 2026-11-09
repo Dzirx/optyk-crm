@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { MONEY, ValidationError, optionalDate } from '@/lib/api/validation';
 import { fromValidator, optDate, optNum, pageParam, pageSizeParam, patchDate, patchNum, searchParam, text } from './common';
 
-export const WORK_ORDER_STATUSES = ['pending', 'ready', 'completed'];
+const WORK_ORDER_STATUSES = ['pending', 'ready', 'completed'];
 
 const BAD_ITEMS = 'Nieprawidłowe pozycje zlecenia';
 
@@ -45,8 +45,6 @@ const itemSchema = z.object(
   },
   { error: BAD_ITEMS },
 );
-
-export type WorkOrderItemInput = z.output<typeof itemSchema>;
 
 const items = z.array(itemSchema, { error: BAD_ITEMS }).optional();
 

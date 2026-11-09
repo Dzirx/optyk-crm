@@ -1,112 +1,138 @@
-# OptykCRM
+# Optyk CRM
 
-CRM system for optical salons. Manage customers, appointments, optical orders, and automatically send SMS requests for Google reviews.
+CRM dla salonów optycznych. Aplikacja zawiera:
 
-## Features
+- klientów (dane kontaktowe, zgoda na SMS),
+- wizyty z automatycznymi SMS: przypomnienie i prośba o opinię,
+- zlecenia z receptą (OD/OS), oprawami i soczewkami oraz wydruk zlecenia,
+- magazyn,
+- wiadomości SMS do wybranych klientów,
+- wysyłkę SMS przez SMSAPI lub SMSPlanet (dostawcę wybiera się w ustawieniach salonu).
 
-- **Customers** — customer database with contact details and SMS consent
-- **Appointments** — appointment registration, automatic SMS reminders and Google review requests
-- **Optical orders** — manage orders with prescription (OD/OS), frames, lenses, and contact lenses
-- **Group messages** — bulk SMS to selected customers with filters (consent, visit count, visit date)
-- **SMS integration** — support for SMSAPI, SMSPlanet, Twilio, Vonage
+Interfejs jest w języku polskim (i angielskim).
 
-## Stack
+## Stos technologiczny
 
-- **Frontend/Backend** — Next.js 16, TypeScript, Tailwind CSS
-- **Database** — PostgreSQL + Prisma ORM
-- **Authentication** — NextAuth.js v5
+- Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4
+- PostgreSQL i Prisma 6 (schemat synchronizowany przez `prisma db push`, bez migracji)
+- NextAuth v5 (logowanie e-mail i hasło), zod 4
+- Wersja Windows: Electron i lokalny PostgreSQL (katalog `desktop/`)
 
-## Quick Start
+## Uruchomienie lokalne
 
-### Option 1: Docker (Recommended for Self-Hosting)
+Wymagania: Node.js 20 (taka wersja jest w `Dockerfile`), Docker.
 
-1. **Clone the repository**
-```bash
-git clone https://github.com/dzirx/google-opinion.git
-cd google-opinion
-```
-
-2. **Create `.env.local`** (copy from `.env`)
-```bash
-cp .env .env.local
-```
-
-3. **Generate secrets**
-```bash
-# NEXTAUTH_SECRET
-openssl rand -base64 32
-
-# CRON_SECRET
-openssl rand -base64 32
-```
-
-4. **Edit `.env.local`** and add your secrets:
-- `NEXTAUTH_SECRET` — generated in step 3
-- `CRON_SECRET` — generated in step 3
-- SMS provider is configured in the dashboard after login
-
-5. **Start the application**
-```bash
-docker-compose up
-```
-
-6. **Run migrations** (in another terminal)
-```bash
-npm run db:push
-```
-
-7. **Open the app**
-```
-http://localhost:3000
-```
-
-### Option 2: Local Development
-
-1. **Install dependencies**
 ```bash
 npm install
+docker run -d --name optyk-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=optyk_crm \
+  -p 5432:5432 postgres:16-alpine
 ```
 
-2. **Start PostgreSQL** (via Docker)
-```bash
-docker-compose up db
+Utwórz plik `.env.local` z co najmniej:
+
+```
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/optyk_crm
+AUTH_SECRET=<openssl rand -base64 32>
+CRON_SECRET=<openssl rand -base64 32>
+ROOT_USER_EMAIL=admin@example.pl
+ROOT_USER_PASSWORD=<hasło>
+ROOT_USER_NAME=Administrator
 ```
 
-3. **Create `.env.local`** (same as Docker Option 1, steps 2–4)
-
-4. **Run migrations**
-```bash
-npm run db:push
-```
-
-5. **Start dev server**
-```bash
-npm run dev
-```
-
-6. **Open the app**
-```
-http://localhost:3000
-```
-
-## Available Scripts
+Następnie:
 
 ```bash
-# Development
-npm run dev              # Start Next.js dev server
+npx prisma db push      # utworzenie tabel
+npm run db:seed         # konto administratora z ROOT_USER_*
+npm run dev             # http://localhost:3000
+```
 
-# Database
-npm run db:generate      # Generate migrations
-npm run db:migrate       # Run migrations
-npm run db:push          # Push schema to database (no migrations)
-npm run db:studio        # Open Prisma Studio
+`npm run dev` i `npm run start` uruchamiają przy starcie także `db:seed:auto`.
 
-# Production
-npm run build            # Build for production
-npm run start            # Start production server
+## Zmienne środowiskowe
 
-# Linting
-npm run lint             # Run ESLint
+| Zmienna | Wymagana | Opis |
+|---|---|---|
+| `DATABASE_URL` | tak | Adres połączenia z PostgreSQL. |
+| `AUTH_SECRET` | tak | Sekret NextAuth do podpisywania sesji. Czytany przez NextAuth, nie przez kod aplikacji. |
+| `AUTH_TRUST_HOST` | za proxy | Ustaw `true`, gdy aplikacja działa za reverse proxy. Czytana przez NextAuth. |
+| `CRON_SECRET` | tak, dla SMS | Token endpointu `GET /api/cron/send-scheduled-sms`. Bez niego endpoint zwraca błąd 500. |
+| `ROOT_USER_EMAIL` | tak | E-mail konta administratora tworzonego przez seed. |
+| `ROOT_USER_PASSWORD` | tak | Hasło tego konta. |
+| `ROOT_USER_NAME` | tak | Nazwa tego konta. Brak którejkolwiek zmiennej `ROOT_USER_*` kończy seed błędem (a w kontenerze zatrzymuje start). |
+| `CONTACT_EMAIL` | nie | E-mail pokazywany po końcu okresu próbnego. Domyślnie pusty. |
+| `CONTACT_PHONE` | nie | Telefon pokazywany po końcu okresu próbnego. Domyślnie pusty. |
+| `TRIAL_DAYS` | nie | Długość okresu próbnego w dniach. Domyślnie `5`. |
+| `APP_TIME_ZONE` | nie | Strefa czasowa dat i godzin. Domyślnie `Europe/Warsaw`. |
+| `LICENSE_PRIVATE_KEY_B64` | dla wersji Windows | Klucz prywatny (Ed25519, PEM w base64) do podpisywania licencji. Bez niego aktywacja Windows nie działa. |
+| `OPTYK_EDITION` | nie | `desktop` włącza tryb wersji Windows (bez rejestracji i okresu próbnego). Ustawia ją instalator, nie ustawiaj jej w chmurze. |
+| `NODE_ENV` | nie | Standardowa zmienna Node.js. Obraz Dockera ustawia `production`. |
+
+Zmienne tylko dla wersji Windows (ustawia je program, nie ręcznie): `LOCAL_USER_EMAIL`, `LOCAL_USER_PASSWORD`, `LOCAL_USER_NAME`.
+Zmienne tylko dla programistów (`desktop/src/main.js`): `OPTYK_LICENSE_SERVER`, `OPTYK_MACHINE_ID`, `OPTYK_PG_BIN_DIR`, `OPTYK_RESOURCES_DIR`, `OPTYK_DEBUG`.
+
+Pliki `.env*` nie należą do repozytorium. Nie umieszczaj w nich danych klientów.
+
+## Wdrożenie (Docker)
+
+Obraz budowany jest z `Dockerfile` (Node 20, tryb `standalone`). Kontener startuje przez `entrypoint.sh`:
+
+1. `npx prisma db push --skip-generate` — synchronizacja schematu bazy przy każdym starcie,
+2. `npx tsx lib/db/seed.ts --silent` — utworzenie administratora, jeśli go nie ma,
+3. `node server.js` — aplikacja na porcie 3000.
+
+Skrypt działa z `set -e`. Błąd w kroku 1 lub 2 zatrzymuje start kontenera.
+
+Uwaga: `db push` bez `--accept-data-loss` zatrzyma start, gdy zmiana schematu usuwa dane. Przed wdrożeniem takiej zmiany sprawdź dane w bazie.
+
+Baza PostgreSQL musi być dostępna pod `DATABASE_URL`. Przykładowy plik `docker-optyk.yaml` pokazuje układ z bazą i aplikacją.
+
+### Zaplanowane SMS (cron)
+
+SMS z przypomnieniem i prośbą o opinię wysyła endpoint wywoływany z zewnątrz. Wywołuj go co 5 minut:
+
+```bash
+curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://TWOJA-DOMENA/api/cron/send-scheduled-sms
+```
+
+Endpoint odpowiada `401` przy złym tokenie i `500` przy braku `CRON_SECRET`.
+
+### Okres próbny i panel administratora
+
+Nowe konto (rejestracja) ma 5 dni okresu próbnego (`TRIAL_DAYS`). Po tym czasie dostęp blokuje się, a użytkownik widzi dane z `CONTACT_EMAIL` i `CONTACT_PHONE`. Administrator zarządza kontami w panelu `/admin/businesses`: przedłuża dostęp, blokuje konta i zwalnia komputery wersji Windows. Konto administratora nie ma limitu dostępu.
+
+## Wersja Windows
+
+Katalog `desktop/` zawiera instalator Windows: Electron, lokalny PostgreSQL i ta sama aplikacja w trybie `OPTYK_EDITION=desktop`. Wersja nie ma rejestracji ani okresu próbnego. Program aktywuje się licencją podpisaną przez serwer w chmurze. Adres serwera jest w `desktop/package.json` (`optyk.licenseServer`).
+
+Klucze licencji (jednorazowo):
+
+```bash
+node scripts/generate-license-keys.mjs
+```
+
+Skrypt zapisuje klucz publiczny w `desktop/src/license-public-key.js` i wypisuje klucz prywatny. Wpisz go do `LICENSE_PRIVATE_KEY_B64` na serwerze. Nie zapisuj go w repozytorium. Nowe klucze unieważniają wydane licencje.
+
+Budowa instalatora (w Dockerze):
+
+```bash
+DOCKER_CONTEXT=desktop-linux desktop/build-windows.sh        # wynik: desktop/dist/
+DOCKER_CONTEXT=desktop-linux desktop/build-windows.sh test   # test orkiestracji na Linuksie
+```
+
+Skrypt przerywa pracę, jeśli brakuje `desktop/src/license-public-key.js` lub `optyk.licenseServer`.
+
+## Skrypty npm
+
+```bash
+npm run dev            # serwer deweloperski (najpierw seed)
+npm run build          # prisma generate + next build
+npm run start          # serwer produkcyjny (najpierw seed)
+npm run lint           # ESLint
+npm run db:push        # synchronizacja schematu z bazą (bez migracji)
+npm run db:generate    # generowanie klienta Prisma
+npm run db:seed        # konto administratora
+npm run db:studio      # Prisma Studio
 ```
 
 ## Testy
@@ -127,41 +153,10 @@ Wymagania dla testów e2e:
 Skrypt `tests/e2e/run.sh` sam tworzy jednorazową bazę (`postgres:16-alpine`, kontener `optyk-e2e-db`),
 zakłada schemat, dodaje konto admina, tworzy klucze licencji w pamięci i uruchamia serwer.
 Po testach zawsze usuwa serwer i kontener. Pliki `.env` nie są używane ani zmieniane.
-Pojedyncza suita: `npm run test:e2e -- idor` (dostępne: `idor`, `fixes`, `trial`, `license`).
+Pojedyncza suita: `npm run test:e2e -- idor` (dostępne: `idor`, `fixes`, `trial`, `license`, `api`, `pagination`).
 
-## Configuration
+Nie uruchamiaj drugiego `next dev` w tym samym katalogu podczas `npm run test:e2e`.
 
-### Environment Variables
+## Licencja
 
-See `.env` for all available options.
-
-**Required:**
-- `DATABASE_URL` — PostgreSQL connection string
-- `NEXTAUTH_SECRET` — Secret for JWT encryption
-- `CRON_SECRET` — Secret for cron endpoints
-
-**SMS Provider:**
-- SMS providers (SMSAPI.pl, Twilio, Vonage) are configured in the **dashboard**
-
-### Database (PostgreSQL)
-
-```bash
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/google_opinion"
-```
-
-## Contributing
-
-Contributions welcome! Fork the repo and submit a pull request.
-
-## License
-
-**Fair Source License** — Free for up to 200 customers per business.
-
-- ✅ **Free:** Use with up to 200 customers (end-users in database)
-- 💼 **Commercial:** For more than 200 customers, [contact us](https://github.com/dzirx/google-opinion/issues) for a commercial license
-
-See [LICENSE](./LICENSE) for full details.
-
----
-
-⭐ Star this repo if you find it useful!
+Licencja: patrz plik LICENSE.

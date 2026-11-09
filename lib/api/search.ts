@@ -6,7 +6,7 @@ import type { Prisma } from '@prisma/client';
 const NUMERIC_ONLY = /^[\d\s+\-().]+$/;
 
 /** Same cyfry z tekstu (telefony w bazie są bez spacji, np. +48500100200). */
-export function digitsOf(value: string): string {
+function digitsOf(value: string): string {
   return value.replace(/\D/g, '');
 }
 

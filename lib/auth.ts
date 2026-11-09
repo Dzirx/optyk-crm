@@ -3,6 +3,7 @@ import Credentials from 'next-auth/providers/credentials';
 import { db } from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import { clearFailures, isLimited, recordFailure } from '@/lib/api/rate-limit';
+import type { UserRole } from '@/lib/types';
 
 // Limit nieudanych logowań: 10 na e-mail z jednego IP i 30 na e-mail z dowolnego IP w ciągu 15 min.
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -59,7 +60,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           id: user.id,
           email: user.email,
           name: user.name || '',
-          role: user.role as 'admin' | 'user',
+          role: user.role as UserRole,
         };
       },
     }),
@@ -74,8 +75,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
     async session({ session, token }) {
       if (session.user) {
-        session.user.id = token.id as string;
-        session.user.role = token.role as 'admin' | 'user';
+        session.user.id = token.id;
+        session.user.role = token.role;
       }
       return session;
     },

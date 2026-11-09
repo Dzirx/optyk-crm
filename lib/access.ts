@@ -3,7 +3,7 @@
 import type { Prisma } from '@prisma/client';
 import { IS_DESKTOP } from '@/lib/edition';
 
-export const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) > 0 ? Number(process.env.TRIAL_DAYS) : 5;
+const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) > 0 ? Number(process.env.TRIAL_DAYS) : 5;
 
 /** Dane kontaktowe pokazywane po zakończeniu okresu próbnego (z .env). */
 export const CONTACT = {

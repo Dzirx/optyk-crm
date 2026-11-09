@@ -21,7 +21,7 @@ export const GET = withBusiness(
   async ({ business, params }) => {
     const found = await db.visit.findFirst({
       where: { id: params.id, customer: { businessId: business.id } },
-      include: { review: true, customer: true },
+      include: { customer: true },
     });
     if (!found) return NextResponse.json({ error: NOT_FOUND }, { status: 404 });
 

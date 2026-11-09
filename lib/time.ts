@@ -1,6 +1,6 @@
 // Strefa czasowa salonu. Serwer (Docker) działa w UTC, więc daty dla ludzi
 // (treść SMS, „wizyty dziś”, numer roku w zleceniu) liczymy jawnie w tej strefie.
-export const APP_TIME_ZONE = process.env.APP_TIME_ZONE || 'Europe/Warsaw';
+const APP_TIME_ZONE = process.env.APP_TIME_ZONE || 'Europe/Warsaw';
 
 /** Data w formacie dd.mm.rrrr w strefie salonu. */
 export function formatDatePl(value: Date | string): string {
