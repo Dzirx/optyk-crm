@@ -4,8 +4,8 @@ import { db } from '@/lib/db';
 import { daysLeft, hasAccess } from '@/lib/access';
 import { IS_DESKTOP } from '@/lib/edition';
 import { LanguageProvider } from '@/lib/i18n/language-context';
-import { DashboardSidebar } from '@/components/dashboard-sidebar';
-import { AccessExpired, TrialBanner } from '@/components/access-notice';
+import { DashboardSidebar } from '@/components/dashboard/dashboard-sidebar';
+import { AccessExpired, TrialBanner } from '@/components/dashboard/access-notice';
 
 export default async function DashboardLayout({
   children,

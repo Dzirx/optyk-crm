@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { NavLink } from '@/components/nav-link';
-import { LanguageSwitcher } from '@/components/language-switcher';
+import { NavLink } from '@/components/dashboard/nav-link';
+import { LanguageSwitcher } from '@/components/dashboard/language-switcher';
 import { useLanguage } from '@/lib/i18n/language-context';
 
 interface DashboardSidebarProps {

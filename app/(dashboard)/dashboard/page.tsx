@@ -1,7 +1,7 @@
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { todayRange } from '@/lib/time';
-import { DashboardContent } from '@/components/dashboard-content';
+import { DashboardContent } from '@/components/dashboard/dashboard-content';
 
 export default async function DashboardPage() {
   const session = await auth();
