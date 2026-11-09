@@ -38,10 +38,15 @@ model User {
   passwordHash String    @map("password_hash") @db.VarChar(255)
   name         String?   @db.VarChar(255)
   role         String    @default("user") @db.VarChar(20)
+  // Koniec dostępu (okres próbny / opłacony). null = bez limitu (stare konta, admin).
+  accessUntil  DateTime? @map("access_until") @db.Timestamp(6)
+  // Wersja Windows: ile komputerów konto może aktywować.
+  windowsDeviceLimit Int  @default(1) @map("windows_device_limit")
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
   business Business?
+  licenseDevices LicenseDevice[]
 
   @@map("users")
 }
@@ -187,6 +192,12 @@ model WorkOrderItem {
   inventoryItemIdOp    String?        @map("inventory_item_id_op") @db.Uuid
   inventoryItemIdOl    String?        @map("inventory_item_id_ol") @db.Uuid
   inventoryItemIdFrame String?        @map("inventory_item_id_frame") @db.Uuid
+
+  // Do zamówienia u dostawcy (osobno dla szkła OP, OL i oprawki). Zaznaczony element
+  // może zdjąć z magazynu towar, którego brak — stan schodzi poniżej zera do czasu dostawy.
+  opOrdered            Boolean        @default(false) @map("op_ordered")
+  olOrdered            Boolean        @default(false) @map("ol_ordered")
+  frameOrdered         Boolean        @default(false) @map("frame_ordered")
   inventoryItemOp      InventoryItem? @relation("InventoryOp", fields: [inventoryItemIdOp], references: [id], onDelete: SetNull)
   inventoryItemOl      InventoryItem? @relation("InventoryOl", fields: [inventoryItemIdOl], references: [id], onDelete: SetNull)
   inventoryItemFrame   InventoryItem? @relation("InventoryFrame", fields: [inventoryItemIdFrame], references: [id], onDelete: SetNull)
@@ -259,4 +270,21 @@ model Review {
   visit        Visit     @relation(fields: [visitId], references: [id], onDelete: Cascade)
 
   @@map("reviews")
+}
+
+// ========================================
+// Aktywowane komputery wersji Windows
+// ========================================
+model LicenseDevice {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  // SHA-256 numeru sprzętowego (UUID płyty / numer BIOS / MachineGuid) — bez danych jawnych.
+  machineHash String   @map("machine_hash") @db.VarChar(64)
+  machineName String?  @map("machine_name") @db.VarChar(255)
+  activatedAt DateTime @default(now()) @map("activated_at") @db.Timestamp(6)
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, machineHash])
+  @@map("license_devices")
 }

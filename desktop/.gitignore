@@ -1,0 +1,4 @@
+node_modules
+dist
+payload
+.build-context

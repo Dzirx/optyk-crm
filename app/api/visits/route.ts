@@ -2,6 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { getUserBusiness } from '@/lib/api/get-user-business';
+import { customerBelongsTo } from '@/lib/api/ownership';
+
+/** Czy data z formularza wskazuje tę samą minutę co data w bazie (oba puste też są równe). */
+function sameMinute(value: unknown, stored: Date | null): boolean {
+  if (value === null || value === '') return stored === null;
+  if (stored === null) return false;
+  const d = new Date(String(value));
+  if (isNaN(d.getTime())) return false;
+  return Math.floor(d.getTime() / 60_000) === Math.floor(stored.getTime() / 60_000);
+}
 
 // GET - List all visits for business (with customer data)
 export async function GET() {
@@ -184,12 +194,23 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Nie znaleziono wizyty' }, { status: 404 });
     }
 
-    // Prevent editing if SMS already sent
-    if (visit.reminderSmsStatus === 'sent' && reminderSmsDate !== undefined) {
+    // Nowy klient wizyty musi należeć do tego samego salonu.
+    if (customerId !== undefined && customerId !== visit.customerId) {
+      if (!(await customerBelongsTo(userBusiness.id, customerId))) {
+        return NextResponse.json({ error: 'Nie znaleziono klienta' }, { status: 404 });
+      }
+    }
+
+    // Po wysyłce nie wolno zmienić daty SMS. Formularz zawsze odsyła datę,
+    // więc blokujemy tylko rzeczywistą zmianę (z dokładnością do minuty).
+    const reminderChanged = reminderSmsDate !== undefined && !sameMinute(reminderSmsDate, visit.reminderSmsDate);
+    const reviewChanged = reviewSmsDate !== undefined && !sameMinute(reviewSmsDate, visit.reviewSmsDate);
+
+    if (visit.reminderSmsStatus === 'sent' && reminderChanged) {
       return NextResponse.json({ error: 'Nie można zmienić daty SMS z przypomnieniem — wiadomość już wysłana' }, { status: 400 });
     }
 
-    if (visit.reviewSmsStatus === 'sent' && reviewSmsDate !== undefined) {
+    if (visit.reviewSmsStatus === 'sent' && reviewChanged) {
       return NextResponse.json({ error: 'Nie można zmienić daty SMS z prośbą o opinię — wiadomość już wysłana' }, { status: 400 });
     }
 
@@ -199,8 +220,12 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Nieprawidłowa data wizyty' }, { status: 400 });
     }
 
-    if (reminderSmsDate) {
-      const reminder = new Date(reminderSmsDate);
+    // Kolejność dat sprawdzamy, gdy zmienia się data SMS albo data wizyty (SMS jeszcze niewysłany).
+    // Bez daty SMS w żądaniu porównujemy z datą zapisaną w bazie.
+    const effectiveReminder = reminderSmsDate !== undefined ? reminderSmsDate : visit.reminderSmsDate?.toISOString();
+    const effectiveReview = reviewSmsDate !== undefined ? reviewSmsDate : visit.reviewSmsDate?.toISOString();
+    if (effectiveReminder && (reminderChanged || (visitDate && visit.reminderSmsStatus !== 'sent'))) {
+      const reminder = new Date(effectiveReminder);
       if (isNaN(reminder.getTime())) {
         return NextResponse.json({ error: 'Nieprawidłowa data SMS z przypomnieniem' }, { status: 400 });
       }
@@ -209,8 +234,8 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
-    if (reviewSmsDate) {
-      const review = new Date(reviewSmsDate);
+    if (effectiveReview && (reviewChanged || (visitDate && visit.reviewSmsStatus !== 'sent'))) {
+      const review = new Date(effectiveReview);
       if (isNaN(review.getTime())) {
         return NextResponse.json({ error: 'Nieprawidłowa data SMS z prośbą o opinię' }, { status: 400 });
       }
@@ -226,8 +251,15 @@ export async function PATCH(req: NextRequest) {
     if (visitDate !== undefined) updateData.visitDate = newVisitDate;
     if (visitType !== undefined) updateData.visitType = visitType;
     if (notes !== undefined) updateData.notes = notes;
-    if (reminderSmsDate !== undefined) updateData.reminderSmsDate = reminderSmsDate ? new Date(reminderSmsDate) : null;
-    if (reviewSmsDate !== undefined) updateData.reviewSmsDate = reviewSmsDate ? new Date(reviewSmsDate) : null;
+    // Nowa data SMS po nieudanej wysyłce → SMS wraca do kolejki crona.
+    if (reminderChanged) {
+      updateData.reminderSmsDate = reminderSmsDate ? new Date(reminderSmsDate) : null;
+      if (reminderSmsDate && visit.reminderSmsStatus === 'failed') updateData.reminderSmsStatus = 'pending';
+    }
+    if (reviewChanged) {
+      updateData.reviewSmsDate = reviewSmsDate ? new Date(reviewSmsDate) : null;
+      if (reviewSmsDate && visit.reviewSmsStatus === 'failed') updateData.reviewSmsStatus = 'pending';
+    }
 
     const updatedVisit = await db.visit.update({
       where: { id },

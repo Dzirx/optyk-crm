@@ -41,13 +41,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-FEATURES.md
-Plan.md
-TECH_STACK.md
-PROGRESS.md
 CHANGES.md
-MIGRATION_COMPLETE.md
-DATABASE_SETUP.md
 docker-optyk.yaml
 PROJEKT.md
 results2.csv

@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import bcrypt from 'bcryptjs';
+import { trialEnd } from '@/lib/access';
+import { IS_DESKTOP } from '@/lib/edition';
 
 export async function POST(req: NextRequest) {
+  // Wersja Windows: jedno konto tworzone przy instalacji, bez rejestracji.
+  if (IS_DESKTOP) {
+    return NextResponse.json({ error: 'Rejestracja jest niedostępna' }, { status: 404 });
+  }
   try {
     const body = await req.json();
-    const { name, email, password } = body;
+    const { name, password } = body;
+    const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
 
-    if (!name || !email || !password) {
+    if (!name || !email || typeof password !== 'string') {
       return NextResponse.json(
         { error: 'Brakujące wymagane pola' },
         { status: 400 }
@@ -21,8 +28,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const existingUser = await db.user.findUnique({
-      where: { email },
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json({ error: 'Nieprawidłowy adres e-mail' }, { status: 400 });
+    }
+
+    const existingUser = await db.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
     });
 
     if (existingUser) {
@@ -40,6 +51,7 @@ export async function POST(req: NextRequest) {
         email,
         passwordHash,
         role: 'user',
+        accessUntil: trialEnd(),
       },
     });
 

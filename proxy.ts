@@ -1,12 +1,18 @@
 import { auth } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { IS_DESKTOP } from '@/lib/edition';
 
 export default async function proxy(req: NextRequest) {
   // Get session using NextAuth
   const session = await auth();
   const { pathname } = req.nextUrl;
   const isLoggedIn = !!session;
+
+  // Wersja Windows: bez strony sprzedażowej i bez rejestracji.
+  if (IS_DESKTOP && (pathname === '/' || pathname === '/register')) {
+    return NextResponse.redirect(new URL(isLoggedIn ? '/dashboard' : '/login', req.url));
+  }
 
   // Protected routes
   const isProtectedRoute = pathname.startsWith('/dashboard') ||

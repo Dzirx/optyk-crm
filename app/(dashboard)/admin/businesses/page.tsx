@@ -1,20 +1,33 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/language-context';
 
 interface Business {
   id: string;
-  name: string;
+  name: string | null;
   phone: string | null;
-  googleReviewUrl: string;
+  googleReviewUrl: string | null;
   smsProvider: string | null;
   createdAt: string;
   userId: string;
   userName: string;
   userEmail: string;
   customerCount: number;
+  accessUntil: string | null;
+  windowsDeviceLimit: number;
+  windowsDevices: { machineName: string | null; activatedAt: string }[];
+}
+
+function accessLabel(accessUntil: string | null): { text: string; className: string } {
+  if (!accessUntil) return { text: 'Bez limitu', className: 'bg-green-100 text-green-800' };
+  const end = new Date(accessUntil);
+  const days = Math.ceil((end.getTime() - Date.now()) / 86_400_000);
+  if (days <= 0) return { text: `Zablokowany od ${end.toLocaleDateString('pl-PL')}`, className: 'bg-red-100 text-red-800' };
+  return {
+    text: `Do ${end.toLocaleDateString('pl-PL')} (${days} ${days === 1 ? 'dzień' : 'dni'})`,
+    className: days <= 2 ? 'bg-yellow-100 text-yellow-800' : 'bg-blue-100 text-blue-800',
+  };
 }
 
 export default function AdminBusinessesPage() {
@@ -22,7 +35,6 @@ export default function AdminBusinessesPage() {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const router = useRouter();
 
   useEffect(() => {
     fetchBusinesses();
@@ -48,6 +60,41 @@ export default function AdminBusinessesPage() {
       setError(err instanceof Error ? err.message : 'Failed to fetch businesses');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const changeAccess = async (userId: string, action: 'extend' | 'unlimited' | 'block', days?: number) => {
+    if (action === 'block' && !confirm('Zablokować dostęp temu kontu?')) return;
+    try {
+      const response = await fetch('/api/admin/businesses', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, action, days }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Nie udało się zmienić dostępu');
+      setBusinesses((list) => list.map((b) => (b.userId === userId ? { ...b, accessUntil: data.accessUntil } : b)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nie udało się zmienić dostępu');
+    }
+  };
+
+  const changeWindows = async (business: Business, action: 'unpinDevices' | 'deviceLimit', limit?: number) => {
+    if (action === 'unpinDevices' && !confirm(
+      'Odpiąć komputery tego salonu?\n\nSalon będzie mógł aktywować program na nowym komputerze. ' +
+      'Program na starym komputerze działa dalej (licencja jest sprawdzana bez internetu).',
+    )) return;
+    try {
+      const response = await fetch('/api/admin/businesses', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: business.userId, action, limit }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Nie udało się zmienić ustawień Windows');
+      setBusinesses((list) => list.map((b) => (b.userId === business.userId ? { ...b, ...data } : b)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nie udało się zmienić ustawień Windows');
     }
   };
 
@@ -158,13 +205,15 @@ export default function AdminBusinessesPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('adminSmsProvider')}</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('customers')}</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('adminCreated')}</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dostęp</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Windows</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {businesses.map((business) => (
-                  <tr key={business.id} className="hover:bg-gray-50">
+                  <tr key={business.userId} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">{business.name}</div>
+                      <div className="text-sm font-medium text-gray-900">{business.name ?? <span className="text-gray-400">— salon nieutworzony —</span>}</div>
                       <div className="text-sm text-gray-500">{business.phone || t('adminNoPhone')}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -172,14 +221,14 @@ export default function AdminBusinessesPage() {
                       <div className="text-sm text-gray-500">{business.userEmail}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <a
+                      {business.googleReviewUrl && <a
                         href={business.googleReviewUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-sm text-blue-600 hover:text-blue-900 underline"
                       >
                         {t('adminGoogleReview')}
-                      </a>
+                      </a>}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {business.smsProvider ? (
@@ -194,7 +243,42 @@ export default function AdminBusinessesPage() {
                       <div className="text-sm text-gray-900">{business.customerCount}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(business.createdAt).toLocaleDateString()}
+                      {new Date(business.createdAt).toLocaleDateString('pl-PL')}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {(() => {
+                        const a = accessLabel(business.accessUntil);
+                        return <span className={`px-2 py-1 text-xs rounded-full ${a.className}`}>{a.text}</span>;
+                      })()}
+                      <div className="mt-2 flex gap-1">
+                        <button onClick={() => changeAccess(business.userId, 'extend', 30)} className="px-2 py-1 text-xs rounded border border-gray-300 hover:bg-gray-100">+30 dni</button>
+                        <button onClick={() => changeAccess(business.userId, 'extend', 365)} className="px-2 py-1 text-xs rounded border border-gray-300 hover:bg-gray-100">+1 rok</button>
+                        <button onClick={() => changeAccess(business.userId, 'unlimited')} className="px-2 py-1 text-xs rounded border border-gray-300 hover:bg-gray-100">Bez limitu</button>
+                        <button onClick={() => changeAccess(business.userId, 'block')} className="px-2 py-1 text-xs rounded border border-red-200 text-red-700 hover:bg-red-50">Zablokuj</button>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <div className="font-medium text-gray-900">
+                        {business.windowsDevices.length} / {business.windowsDeviceLimit}{' '}
+                        {business.windowsDeviceLimit === 1 ? 'komputer' : 'komputery'}
+                      </div>
+                      {business.windowsDevices.map((d, i) => (
+                        <div key={i} className="text-xs text-gray-500">
+                          {d.machineName || 'komputer'} · {new Date(d.activatedAt).toLocaleDateString('pl-PL')}
+                        </div>
+                      ))}
+                      {business.accessUntil !== null && (
+                        <div className="text-xs text-amber-700">Aktywacja po ustawieniu „Bez limitu”</div>
+                      )}
+                      <div className="mt-2 flex gap-1">
+                        {business.windowsDevices.length > 0 && (
+                          <button onClick={() => changeWindows(business, 'unpinDevices')} className="px-2 py-1 text-xs rounded border border-gray-300 hover:bg-gray-100">Odepnij</button>
+                        )}
+                        <button onClick={() => changeWindows(business, 'deviceLimit', business.windowsDeviceLimit + 1)} className="px-2 py-1 text-xs rounded border border-gray-300 hover:bg-gray-100">Limit +1</button>
+                        {business.windowsDeviceLimit > 1 && (
+                          <button onClick={() => changeWindows(business, 'deviceLimit', business.windowsDeviceLimit - 1)} className="px-2 py-1 text-xs rounded border border-gray-300 hover:bg-gray-100">Limit −1</button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

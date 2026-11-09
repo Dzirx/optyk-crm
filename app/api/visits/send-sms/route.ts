@@ -3,6 +3,8 @@ import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { SmsProviderFactory } from '@/lib/sms/providers/factory';
 import { getUserBusiness } from '@/lib/api/get-user-business';
+import { renderSmsTemplate } from '@/lib/sms/render';
+import { claimVisitSms, logVisitSms, markVisitSmsFailed, sendSafely } from '@/lib/sms/delivery';
 
 export async function POST(req: NextRequest) {
   try {
@@ -69,98 +71,49 @@ export async function POST(req: NextRequest) {
     }
 
     // Replace placeholders in template
-    const customerFullName = `${visit.customer.name} ${visit.customer.surname}`;
-    const visitDate = new Date(visit.visitDate).toLocaleDateString('pl-PL');
+    const message = renderSmsTemplate(template, {
+      name: `${visit.customer.name} ${visit.customer.surname}`,
+      staff: userBusiness.name,
+      link: userBusiness.googleReviewUrl,
+      date: visit.visitDate,
+    });
 
-    const message = template
-      .replace(/{name}/g, customerFullName)
-      .replace(/{staff}/g, userBusiness.name)
-      .replace(/{link}/g, userBusiness.googleReviewUrl)
-      .replace(/{date}/g, visitDate);
-
-    // Send SMS
-    let smsResult;
+    let smsProvider;
     try {
-      const smsProvider = SmsProviderFactory.create(
+      smsProvider = SmsProviderFactory.create(
         userBusiness.smsProvider as any,
         userBusiness.smsConfig as any
       );
+    } catch (error) {
+      console.error('SMS provider creation failed:', error);
+      return NextResponse.json({ error: 'Nieprawidłowa konfiguracja dostawcy SMS' }, { status: 400 });
+    }
 
-      smsResult = await smsProvider.sendSms(visit.customer.phone, message);
+    // Rezerwacja: chroni przed podwójną wysyłką (podwójne kliknięcie, równoległy cron).
+    if (!(await claimVisitSms(visit.id, smsType, 'notSent'))) {
+      return NextResponse.json({ error: 'Ten SMS został już wysłany' }, { status: 409 });
+    }
 
-      if (!smsResult.success) {
-        throw new Error(smsResult.error || 'SMS provider returned failure');
-      }
-    } catch (smsError) {
-      console.error('SMS sending failed:', smsError);
+    const smsResult = await sendSafely(smsProvider, visit.customer.phone, message);
 
-      // Log failed SMS
-      await db.smsLog.create({
-        data: {
-          visitId: visit.id,
-          smsType,
-          phone: visit.customer.phone,
-          message,
-          status: 'failed',
-          errorMessage: smsError instanceof Error ? smsError.message : 'Nieznany błąd',
-        },
+    if (!smsResult.success) {
+      console.error('SMS sending failed:', smsResult.error);
+      await markVisitSmsFailed(visit.id, smsType);
+      await logVisitSms({
+        visitId: visit.id, smsType, phone: visit.customer.phone, message,
+        status: 'failed', errorMessage: smsResult.error,
       });
-
-      // Update visit status to failed
-      if (smsType === 'reminder') {
-        await db.visit.update({
-          where: { id: visit.id },
-          data: {
-            reminderSmsStatus: 'failed',
-          },
-        });
-      } else {
-        await db.visit.update({
-          where: { id: visit.id },
-          data: {
-            reviewSmsStatus: 'failed',
-          },
-        });
-      }
-
       return NextResponse.json({
         error: 'Nie udało się wysłać SMS',
-        details: smsError instanceof Error ? smsError.message : 'Nieznany błąd'
+        details: smsResult.error || 'Nieznany błąd',
       }, { status: 500 });
     }
 
-    // Log successful SMS
-    await db.smsLog.create({
-      data: {
-        visitId: visit.id,
-        smsType,
-        phone: visit.customer.phone,
-        message,
-        status: 'sent',
-        smsapiMessageId: smsResult.messageId || null,
-        cost: smsResult.cost || null,
-      },
+    // Log nie blokuje odpowiedzi — SMS już wyszedł, a status jest ustawiony.
+    await logVisitSms({
+      visitId: visit.id, smsType, phone: visit.customer.phone, message,
+      status: 'sent', messageId: smsResult.messageId, cost: smsResult.cost,
     });
-
-    // Update visit status
-    const now = new Date();
-    if (smsType === 'reminder') {
-      await db.visit.update({
-        where: { id: visit.id },
-        data: {
-          reminderSmsStatus: 'sent',
-          reminderSmsSentAt: now,
-        },
-      });
-    } else {
-      await db.visit.update({
-        where: { id: visit.id },
-        data: {
-          reviewSmsStatus: 'sent',
-          reviewSmsSentAt: now,
-        },
-      });
-    }
 
     return NextResponse.json({
       message: `${smsType} SMS sent successfully`,

@@ -380,6 +380,31 @@ export default function SettingsPage() {
                   type="button"
                   draggable
                   onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', '{time}');
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  onClick={() => {
+                    const textarea = document.activeElement as HTMLTextAreaElement;
+                    if (textarea?.tagName === 'TEXTAREA') {
+                      const start = textarea.selectionStart;
+                      const text = textarea.value;
+                      const newValue = text.substring(0, start) + '{time}' + text.substring(textarea.selectionEnd);
+                      if (textarea.id === 'reminderSmsTemplate') {
+                        setFormData({ ...formData, reminderSmsTemplate: newValue });
+                      } else if (textarea.id === 'reviewSmsTemplate') {
+                        setFormData({ ...formData, reviewSmsTemplate: newValue });
+                      }
+                      setTimeout(() => { textarea.focus(); textarea.setSelectionRange(start + 6, start + 6); }, 0);
+                    }
+                  }}
+                  className="bg-purple-100 hover:bg-purple-200 text-purple-800 px-3 py-1.5 rounded font-mono text-xs transition-colors cursor-move border border-purple-300 active:scale-95"
+                >
+                  {"{time}"} <span className="text-purple-600 font-sans ml-1">- {t('visitTimePlaceholder')}</span>
+                </button>
+                <button
+                  type="button"
+                  draggable
+                  onDragStart={(e) => {
                     e.dataTransfer.setData('text/plain', '{staff}');
                     e.dataTransfer.effectAllowed = 'copy';
                   }}

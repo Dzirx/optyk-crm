@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { getUserBusiness } from '@/lib/api/get-user-business';
+import { returnOrdersToStock } from '@/lib/work-orders/inventory';
 
 // GET - List all customers for business
 export async function GET() {
@@ -206,9 +207,11 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Nie znaleziono klienta' }, { status: 404 });
     }
 
-    // Delete customer (cascade deletes visits, reviews, sms_logs)
-    await db.customer.delete({
-      where: { id: id },
+    // Usunięcie klienta kasuje kaskadowo jego wizyty i zlecenia. Towar z pozycji
+    // zleceń wraca najpierw na stan magazynu — w tej samej transakcji.
+    await db.$transaction(async (tx) => {
+      await returnOrdersToStock(tx, { workOrder: { customerId: id, businessId: userBusiness.id } });
+      await tx.customer.delete({ where: { id } });
     });
 
     return NextResponse.json({ message: 'Customer deleted successfully' });

@@ -3,13 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/language-context';
-
-function formatPhone(value: string): string {
-  const clean = value.replace(/\s/g, '');
-  const prefix = clean.startsWith('+') ? '+' : '';
-  const digits = clean.replace(/^\+/, '');
-  return prefix + digits.replace(/(\d{3})(?=\d)/g, '$1 ');
-}
+import { formatPhone } from '@/lib/phone';
 
 interface Visit {
   id: string;
@@ -36,6 +30,16 @@ interface Customer {
   surname: string;
   phone: string;
 }
+
+// Pole datetime-local nie ma strefy czasowej. Serwer działa w UTC, więc wysyłamy
+// pełną datę ISO policzoną w przeglądarce, a do edycji zamieniamy ISO na czas lokalny.
+const localInputToIso = (value: string): string | null => (value ? new Date(value).toISOString() : null);
+const isoToLocalInput = (iso: string | null): string => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
 
 const toLocalDateStr = (d: Date): string => {
   const y = d.getFullYear();
@@ -174,7 +178,11 @@ export default function VisitsPage() {
       const response = await fetch('/api/visits', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          ...formData,
+          visitDate: localInputToIso(formData.visitDate),
+          reminderSmsDate: localInputToIso(formData.reminderSmsDate),
+        }),
       });
 
       const data = await response.json();
@@ -210,6 +218,8 @@ export default function VisitsPage() {
         body: JSON.stringify({
           id: editingVisit.id,
           ...formData,
+          visitDate: localInputToIso(formData.visitDate),
+          reminderSmsDate: localInputToIso(formData.reminderSmsDate),
         }),
       });
 
@@ -273,10 +283,10 @@ export default function VisitsPage() {
     setEditingVisit(visit);
     setFormData({
       customerId: visit.customerId,
-      visitDate: visit.visitDate.split('T')[0] + 'T' + visit.visitDate.split('T')[1].substring(0, 5),
+      visitDate: isoToLocalInput(visit.visitDate),
       visitType: visit.visitType || '',
       notes: visit.notes || '',
-      reminderSmsDate: visit.reminderSmsDate ? visit.reminderSmsDate.split('T')[0] + 'T' + visit.reminderSmsDate.split('T')[1].substring(0, 5) : '',
+      reminderSmsDate: isoToLocalInput(visit.reminderSmsDate),
     });
   };
 
@@ -374,15 +384,6 @@ export default function VisitsPage() {
       return visitDate === selectedDate;
     });
   }
-
-  const getStatusColor = (status: string | null) => {
-    switch (status) {
-      case 'sent': return 'bg-green-100 text-green-800';
-      case 'failed': return 'bg-red-100 text-red-800';
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
 
   return (
     <div className="px-4 py-6 sm:px-0">
@@ -638,7 +639,7 @@ export default function VisitsPage() {
                           placeholder={t('searchCustomers')}
                           value={customerSearch}
                           onChange={(e) => setCustomerSearch(e.target.value)}
-                          className="block w-full rounded-md border border-gray-300 px-3 py-2 bg-white placeholder-gray-400"
+                          className="block w-full rounded-md border border-gray-300 px-3 py-2 bg-white placeholder:text-gray-400"
                           style={{ color: '#000000' }}
                           autoComplete="off"
                         />
@@ -807,7 +808,7 @@ export default function VisitsPage() {
                     value={formData.visitType}
                     onChange={(e) => setFormData({ ...formData, visitType: e.target.value })}
                     placeholder={t('visitTypePlaceholder')}
-                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 bg-white placeholder-gray-400"
+                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 bg-white placeholder:text-gray-400"
                     style={{ color: '#000000' }}
                   />
                 </div>

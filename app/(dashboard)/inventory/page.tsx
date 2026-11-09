@@ -238,6 +238,11 @@ export default function InventoryPage() {
                         className={`font-semibold px-2 py-0.5 rounded cursor-pointer hover:bg-gray-100 ${item.quantity <= 0 ? 'text-red-600' : item.quantity <= 2 ? 'text-yellow-600' : 'text-green-700'}`}
                       >
                         {item.quantity}
+                        {item.quantity < 0 && (
+                          <span className="ml-1 text-xs font-normal" title="Sztuki zamówione do zleceń, czekają na dostawę">
+                            (zamówione: {-item.quantity})
+                          </span>
+                        )}
                       </button>
                     )}
                   </td>

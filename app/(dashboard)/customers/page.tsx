@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/language-context';
+import { formatPhone as formatPhoneDisplay } from '@/lib/phone';
 
 interface Customer {
   id: string;
@@ -15,14 +16,6 @@ interface Customer {
   visits?: any[];
 }
 
-
-function formatPhoneDisplay(value: string): string {
-  const clean = value.replace(/\s/g, '');
-  const prefix = clean.startsWith('+') ? '+' : '';
-  const digits = clean.replace(/^\+/, '');
-  const parts = digits.replace(/(\d{3})(?=\d)/g, '$1 ');
-  return prefix + parts;
-}
 
 export default function CustomersPage() {
   const { t } = useLanguage();
@@ -362,7 +355,7 @@ export default function CustomersPage() {
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: formatPhoneDisplay(e.target.value) })}
                     placeholder=""
-                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 bg-white placeholder-gray-400"
+                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 bg-white placeholder:text-gray-400"
                     style={{ color: '#000000' }}
                     required
                   />

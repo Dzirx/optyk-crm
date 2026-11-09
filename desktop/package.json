@@ -1,0 +1,44 @@
+{
+  "name": "optyk-crm-desktop",
+  "productName": "Optyk CRM",
+  "version": "1.0.0",
+  "description": "Optyk CRM - wersja na Windows (Electron + lokalny PostgreSQL)",
+  "main": "src/main.js",
+  "private": true,
+  "optyk": {
+    "licenseServer": "https://optykcrm.pl"
+  },
+  "author": "Optyk CRM",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "pl.optykcrm.desktop",
+    "productName": "Optyk CRM",
+    "directories": { "output": "dist", "buildResources": "assets" },
+    "files": ["src/**/*", "package.json"],
+    "extraResources": [
+      { "from": "payload/app", "to": "app", "filter": ["**/*"] },
+      { "from": "payload/tools", "to": "tools", "filter": ["**/*"] },
+      { "from": "payload/pg", "to": "pg", "filter": ["**/*"] },
+      { "from": "payload/vcredist", "to": "vcredist", "filter": ["**/*"] }
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "artifactName": "OptykCRM-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { SmsProviderFactory } from '@/lib/sms/providers/factory';
+import { activeUserWhere } from '@/lib/access';
+import { renderSmsTemplate } from '@/lib/sms/render';
+import { claimVisitSms, logVisitSms, markVisitSmsFailed, sendSafely, type VisitSmsType } from '@/lib/sms/delivery';
 
 /**
  * Cron job to send scheduled SMS messages (reminder + review)
@@ -41,6 +44,8 @@ export async function GET(req: NextRequest) {
           lte: now,
         },
         reminderSmsStatus: 'pending',
+        // Salony po końcu okresu próbnego nie wysyłają SMS.
+        customer: { business: { user: activeUserWhere(now) } },
       },
       include: {
         customer: {
@@ -67,6 +72,8 @@ export async function GET(req: NextRequest) {
           lte: now,
         },
         reviewSmsStatus: 'pending',
+        // Salony po końcu okresu próbnego nie wysyłają SMS.
+        customer: { business: { user: activeUserWhere(now) } },
       },
       include: {
         customer: {
@@ -95,13 +102,22 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     console.error('[CRON] Fatal error:', error);
     return NextResponse.json(
-      { error: 'Nie udało się przetworzyć zaplanowanego SMS', details: error instanceof Error ? error.message : 'Nieznany błąd' },
+      { error: 'Nie udało się przetworzyć zaplanowanego SMS' },
       { status: 500 }
     );
   }
 }
 
-async function processSms(visit: any, smsType: 'reminder' | 'review', results: any) {
+async function processSms(visit: any, smsType: VisitSmsType, results: any) {
+  const counters = results[`${smsType}Sms`];
+  const statusField = smsType === 'reminder' ? 'reminderSmsStatus' : 'reviewSmsStatus';
+
+  // Błąd przed wysyłką: oznacz jako nieudany (SMS nie wyszedł, więc nie ma ryzyka duplikatu).
+  async function failBeforeSend(reason: string, message = '') {
+    await db.visit.update({ where: { id: visit.id }, data: { [statusField]: 'failed' } });
+    await logVisitSms({ visitId: visit.id, smsType, phone: visit.customer.phone, message, status: 'failed', errorMessage: reason });
+  }
+
   try {
     const customer = visit.customer;
     const business = customer.business;
@@ -109,26 +125,8 @@ async function processSms(visit: any, smsType: 'reminder' | 'review', results: a
     // Check SMS consent
     if (!customer.smsConsent) {
       console.log(`[CRON] Skipping ${smsType} for visit ${visit.id} - customer has no SMS consent`);
-      results[`${smsType}Sms`].skipped++;
-
-      // Mark as failed with reason
-      const statusField = smsType === 'reminder' ? 'reminderSmsStatus' : 'reviewSmsStatus';
-      await db.visit.update({
-        where: { id: visit.id },
-        data: { [statusField]: 'failed' },
-      });
-
-      await db.smsLog.create({
-        data: {
-          visitId: visit.id,
-          smsType,
-          phone: customer.phone,
-          message: '',
-          status: 'failed',
-          errorMessage: 'Customer has not consented to SMS',
-        },
-      });
-
+      counters.skipped++;
+      await failBeforeSend('Customer has not consented to SMS');
       return;
     }
 
@@ -136,25 +134,8 @@ async function processSms(visit: any, smsType: 'reminder' | 'review', results: a
     if (!business.smsProvider || !business.smsConfig) {
       console.warn(`[CRON] Business ${business.id} has no SMS configuration`);
       results.errors.push({ visitId: visit.id, type: smsType, error: 'No SMS configuration' });
-
-      const statusField = smsType === 'reminder' ? 'reminderSmsStatus' : 'reviewSmsStatus';
-      await db.visit.update({
-        where: { id: visit.id },
-        data: { [statusField]: 'failed' },
-      });
-
-      await db.smsLog.create({
-        data: {
-          visitId: visit.id,
-          smsType,
-          phone: customer.phone,
-          message: '',
-          status: 'failed',
-          errorMessage: 'Business SMS provider not configured',
-        },
-      });
-
-      results[`${smsType}Sms`].failed++;
+      counters.failed++;
+      await failBeforeSend('Business SMS provider not configured');
       return;
     }
 
@@ -163,26 +144,18 @@ async function processSms(visit: any, smsType: 'reminder' | 'review', results: a
     if (!template) {
       console.warn(`[CRON] Business ${business.id} missing ${smsType} template`);
       results.errors.push({ visitId: visit.id, type: smsType, error: 'Template not configured' });
-
-      const statusField = smsType === 'reminder' ? 'reminderSmsStatus' : 'reviewSmsStatus';
-      await db.visit.update({
-        where: { id: visit.id },
-        data: { [statusField]: 'failed' },
-      });
-
-      results[`${smsType}Sms`].failed++;
+      counters.failed++;
+      await failBeforeSend('SMS template not configured');
       return;
     }
 
     // Generate message from template
-    const customerFullName = `${customer.name} ${customer.surname}`;
-    const visitDate = new Date(visit.visitDate).toLocaleDateString('pl-PL');
-
-    const message = template
-      .replace(/{name}/g, customerFullName)
-      .replace(/{staff}/g, business.name)
-      .replace(/{link}/g, business.googleReviewUrl)
-      .replace(/{date}/g, visitDate);
+    const message = renderSmsTemplate(template, {
+      name: `${customer.name} ${customer.surname}`,
+      staff: business.name,
+      link: business.googleReviewUrl,
+      date: visit.visitDate,
+    });
 
     // Create SMS provider
     let smsProvider;
@@ -191,95 +164,39 @@ async function processSms(visit: any, smsType: 'reminder' | 'review', results: a
     } catch (error) {
       console.error(`[CRON] Failed to create SMS provider:`, error);
       results.errors.push({ visitId: visit.id, type: smsType, error: 'Provider creation failed' });
-
-      const statusField = smsType === 'reminder' ? 'reminderSmsStatus' : 'reviewSmsStatus';
-      await db.visit.update({
-        where: { id: visit.id },
-        data: { [statusField]: 'failed' },
-      });
-
-      await db.smsLog.create({
-        data: {
-          visitId: visit.id,
-          smsType,
-          phone: customer.phone,
-          message,
-          status: 'failed',
-          errorMessage: error instanceof Error ? error.message : 'Provider creation failed',
-        },
-      });
-
-      results[`${smsType}Sms`].failed++;
+      counters.failed++;
+      await failBeforeSend(error instanceof Error ? error.message : 'Provider creation failed', message);
       return;
     }
 
-    // Send SMS
-    let smsResult;
-    try {
-      smsResult = await smsProvider.sendSms(customer.phone, message);
-    } catch (error) {
-      console.error(`[CRON] SMS sending error:`, error);
+    // Rezerwacja: tylko jeden proces może wysłać ten SMS (chroni przed duplikatami
+    // przy równoległych uruchomieniach crona i przy błędach zapisu po wysyłce).
+    if (!(await claimVisitSms(visit.id, smsType, 'pending'))) {
+      console.log(`[CRON] ${smsType} for visit ${visit.id} already handled by another run`);
+      counters.skipped++;
+      return;
+    }
 
-      await db.smsLog.create({
-        data: {
-          visitId: visit.id,
-          smsType,
-          phone: customer.phone,
-          message,
-          status: 'failed',
-          errorMessage: error instanceof Error ? error.message : 'Nieznany błąd',
-        },
-      });
+    const smsResult = await sendSafely(smsProvider, customer.phone, message);
 
-      const statusField = smsType === 'reminder' ? 'reminderSmsStatus' : 'reviewSmsStatus';
-      await db.visit.update({
-        where: { id: visit.id },
-        data: { [statusField]: 'failed' },
-      });
-
+    if (!smsResult.success) {
+      console.error(`[CRON] ${smsType} SMS failed for visit ${visit.id}: ${smsResult.error}`);
+      await markVisitSmsFailed(visit.id, smsType);
+      await logVisitSms({ visitId: visit.id, smsType, phone: customer.phone, message, status: 'failed', errorMessage: smsResult.error });
       results.errors.push({ visitId: visit.id, type: smsType, error: 'Sending failed' });
-      results[`${smsType}Sms`].failed++;
+      counters.failed++;
       return;
     }
 
-    // Success!
     console.log(`[CRON] ${smsType} SMS sent successfully for visit ${visit.id}`);
-
-    await db.smsLog.create({
-      data: {
-        visitId: visit.id,
-        smsType,
-        phone: customer.phone,
-        message,
-        status: 'sent',
-        smsapiMessageId: smsResult.messageId || null,
-        cost: smsResult.cost || null,
-      },
+    await logVisitSms({
+      visitId: visit.id, smsType, phone: customer.phone, message, status: 'sent',
+      messageId: smsResult.messageId, cost: smsResult.cost,
     });
-
-    const now = new Date();
-    if (smsType === 'reminder') {
-      await db.visit.update({
-        where: { id: visit.id },
-        data: {
-          reminderSmsStatus: 'sent',
-          reminderSmsSentAt: now,
-        },
-      });
-    } else {
-      await db.visit.update({
-        where: { id: visit.id },
-        data: {
-          reviewSmsStatus: 'sent',
-          reviewSmsSentAt: now,
-        },
-      });
-    }
-
-    results[`${smsType}Sms`].sent++;
+    counters.sent++;
   } catch (error) {
     console.error(`[CRON] Unexpected error processing visit ${visit.id}:`, error);
     results.errors.push({ visitId: visit.id, type: smsType, error: 'Unexpected error' });
-    results[`${smsType}Sms`].failed++;
+    counters.failed++;
   }
 }

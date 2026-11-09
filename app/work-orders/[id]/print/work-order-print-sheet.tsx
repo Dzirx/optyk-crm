@@ -1,5 +1,7 @@
 import type { Business, Customer, WorkOrder, WorkOrderItem } from '@prisma/client';
 import styles from './print.module.css';
+import { itemsTotal, hasPrices } from '@/lib/work-orders/totals';
+import { formatPhone } from '@/lib/phone';
 
 type WorkOrderWithRelations = WorkOrder & {
   customer: Customer;
@@ -25,11 +27,9 @@ function formatDate(value: Date | string | null): string {
   return new Date(value).toLocaleDateString('pl-PL');
 }
 
-function formatPhone(value: string): string {
-  const clean = value.replace(/\s/g, '');
-  const prefix = clean.startsWith('+') ? '+' : '';
-  const digits = clean.replace(/^\+/, '');
-  return prefix + digits.replace(/(\d{3})(?=\d)/g, '$1 ');
+// Stare zlecenia mogą nie mieć kwoty — wtedy pokazujemy sumę cen pozycji.
+function orderTotal(workOrder: WorkOrderWithRelations): number | null {
+  return toNumber(workOrder.totalAmount) ?? (hasPrices(workOrder.items) ? itemsTotal(workOrder.items) : null);
 }
 
 function formatMoney(value: number | null): string {
@@ -129,7 +129,7 @@ function ItemBlock({ item }: { item: WorkOrderItem }) {
 }
 
 function OrderFormHalf({ workOrder }: { workOrder: WorkOrderWithRelations }) {
-  const total = toNumber(workOrder.totalAmount);
+  const total = orderTotal(workOrder);
   const deposit = toNumber(workOrder.deposit);
   const toPay = total != null ? total - (deposit ?? 0) : null;
 
@@ -194,7 +194,7 @@ function OrderFormHalf({ workOrder }: { workOrder: WorkOrderWithRelations }) {
 }
 
 function InfoHalf({ workOrder, business }: { workOrder: WorkOrderWithRelations; business: Business }) {
-  const total = toNumber(workOrder.totalAmount);
+  const total = orderTotal(workOrder);
   const deposit = toNumber(workOrder.deposit);
   const toPay = total != null ? total - (deposit ?? 0) : null;
 

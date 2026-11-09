@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { userHasAccess } from '@/lib/api/get-user-business';
+
+const ACCESS_EXPIRED = 'Okres próbny zakończył się. Skontaktuj się z nami, aby przedłużyć dostęp.';
 
 // GET /api/business - Get user's business
 export async function GET() {
@@ -9,6 +12,9 @@ export async function GET() {
 
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Nieautoryzowany' }, { status: 401 });
+    }
+    if (!(await userHasAccess(session.user.id))) {
+      return NextResponse.json({ error: ACCESS_EXPIRED }, { status: 403 });
     }
 
     const business = await db.business.findFirst({
@@ -33,6 +39,9 @@ export async function POST(request: NextRequest) {
 
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Nieautoryzowany' }, { status: 401 });
+    }
+    if (!(await userHasAccess(session.user.id))) {
+      return NextResponse.json({ error: ACCESS_EXPIRED }, { status: 403 });
     }
 
     // Check if user already has a business (1:1 relationship in MVP)
@@ -96,6 +105,9 @@ export async function PATCH(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Nieautoryzowany' }, { status: 401 });
     }
+    if (!(await userHasAccess(session.user.id))) {
+      return NextResponse.json({ error: ACCESS_EXPIRED }, { status: 403 });
+    }
 
     const business = await db.business.findFirst({
       where: { userId: session.user.id },
@@ -147,6 +159,9 @@ export async function DELETE() {
 
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Nieautoryzowany' }, { status: 401 });
+    }
+    if (!(await userHasAccess(session.user.id))) {
+      return NextResponse.json({ error: ACCESS_EXPIRED }, { status: 403 });
     }
 
     const business = await db.business.findFirst({

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { SmsProviderFactory } from '@/lib/sms/providers/factory';
+import { sendSafely } from '@/lib/sms/delivery';
 import { getUserBusiness } from '@/lib/api/get-user-business';
 
 export async function POST(req: NextRequest) {
@@ -58,7 +59,7 @@ export async function POST(req: NextRequest) {
         .replace(/{name}/g, `${customer.name} ${customer.surname}`)
         .replace(/{staff}/g, userBusiness.name);
 
-      const result = await smsProvider.sendSms(customer.phone, personalizedMessage);
+      const result = await sendSafely(smsProvider, customer.phone, personalizedMessage);
 
       if (result.success) {
         sent++;
@@ -71,9 +72,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ sent, failed, errors });
   } catch (error) {
     console.error('Error sending bulk SMS:', error);
-    return NextResponse.json({
-      error: 'Failed to send bulk SMS',
-      details: error instanceof Error ? error.message : 'Nieznany błąd',
-    }, { status: 500 });
+    return NextResponse.json({ error: 'Nie udało się wysłać SMS' }, { status: 500 });
   }
 }

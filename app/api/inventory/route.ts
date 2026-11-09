@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { getUserBusiness } from '@/lib/api/get-user-business';
+import { MONEY, optionalNumber, requiredNumber } from '@/lib/api/validation';
+import { knownErrorResponse } from '@/lib/api/errors';
+
+const QTY = { label: 'Ilość', min: 0, max: 1_000_000, integer: true };
+const SPH = { label: 'SPH', min: -50, max: 50 };
+const CYL = { label: 'CYL', min: -20, max: 20 };
+const DIAMETER = { label: 'Średnica', min: 0, max: 9999.9 };
+const PRICE = { label: 'Cena', ...MONEY };
 
 export async function GET() {
   try {
@@ -34,26 +42,28 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { name, quantity, unit, category, sph, cyl, diameter, price, notes } = body;
 
-    if (!name?.trim()) return NextResponse.json({ error: 'Nazwa jest wymagana' }, { status: 400 });
+    if (typeof name !== 'string' || !name.trim()) return NextResponse.json({ error: 'Nazwa jest wymagana' }, { status: 400 });
     if (quantity === undefined || quantity === '') return NextResponse.json({ error: 'Ilość jest wymagana' }, { status: 400 });
 
     const item = await db.inventoryItem.create({
       data: {
         businessId: userBusiness.id,
         name: name.trim(),
-        quantity: parseInt(quantity),
+        quantity: requiredNumber(quantity, QTY),
         unit: unit || 'szt.',
         category: category?.trim() || null,
-        sph: sph !== '' && sph != null ? parseFloat(sph) : null,
-        cyl: cyl !== '' && cyl != null ? parseFloat(cyl) : null,
-        diameter: diameter !== '' && diameter != null ? parseFloat(diameter) : null,
-        price: price !== '' && price != null ? parseFloat(price) : null,
+        sph: optionalNumber(sph, SPH),
+        cyl: optionalNumber(cyl, CYL),
+        diameter: optionalNumber(diameter, DIAMETER),
+        price: optionalNumber(price, PRICE),
         notes: notes?.trim() || null,
       },
     });
 
     return NextResponse.json({ item }, { status: 201 });
   } catch (error) {
+    const known = knownErrorResponse(error);
+    if (known) return known;
     console.error('Error creating inventory item:', error);
     return NextResponse.json({ error: 'Nie udało się dodać pozycji' }, { status: 500 });
   }
@@ -79,19 +89,22 @@ export async function PATCH(req: NextRequest) {
       where: { id },
       data: {
         ...(name !== undefined && { name: name.trim() }),
-        ...(quantity !== undefined && { quantity: parseInt(quantity) }),
+        // Ujemny stan (towar zamówiony do zleceń) można zostawić albo podnieść, ale nie obniżyć poniżej zera.
+        ...(quantity !== undefined && { quantity: requiredNumber(quantity, { ...QTY, min: Math.min(0, existing.quantity) }) }),
         ...(unit !== undefined && { unit }),
         ...(category !== undefined && { category: category?.trim() || null }),
-        ...(sph !== undefined && { sph: sph !== '' && sph != null ? parseFloat(sph) : null }),
-        ...(cyl !== undefined && { cyl: cyl !== '' && cyl != null ? parseFloat(cyl) : null }),
-        ...(diameter !== undefined && { diameter: diameter !== '' && diameter != null ? parseFloat(diameter) : null }),
-        ...(price !== undefined && { price: price !== '' && price != null ? parseFloat(price) : null }),
+        ...(sph !== undefined && { sph: optionalNumber(sph, SPH) }),
+        ...(cyl !== undefined && { cyl: optionalNumber(cyl, CYL) }),
+        ...(diameter !== undefined && { diameter: optionalNumber(diameter, DIAMETER) }),
+        ...(price !== undefined && { price: optionalNumber(price, PRICE) }),
         ...(notes !== undefined && { notes: notes?.trim() || null }),
       },
     });
 
     return NextResponse.json({ item });
   } catch (error) {
+    const known = knownErrorResponse(error);
+    if (known) return known;
     console.error('Error updating inventory item:', error);
     return NextResponse.json({ error: 'Nie udało się zaktualizować pozycji' }, { status: 500 });
   }

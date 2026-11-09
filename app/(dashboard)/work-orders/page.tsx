@@ -2,13 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '@/lib/i18n/language-context';
-
-function formatPhone(value: string): string {
-  const clean = value.replace(/\s/g, '');
-  const prefix = clean.startsWith('+') ? '+' : '';
-  const digits = clean.replace(/^\+/, '');
-  return prefix + digits.replace(/(\d{3})(?=\d)/g, '$1 ');
-}
+import { itemsTotal, hasPrices, inventoryPriceSum } from '@/lib/work-orders/totals';
+import { formatPhone } from '@/lib/phone';
 
 interface WorkOrderItem {
   id?: string;
@@ -23,6 +18,19 @@ interface WorkOrderItem {
   inventoryItemIdOp: string;
   inventoryItemIdOl: string;
   inventoryItemIdFrame: string;
+  opOrdered: boolean;
+  olOrdered: boolean;
+  frameOrdered: boolean;
+}
+
+type OrderedKey = 'opOrdered' | 'olOrdered' | 'frameOrdered';
+const ORDERED_KEYS: OrderedKey[] = ['opOrdered', 'olOrdered', 'frameOrdered'];
+
+/** Elementy zlecenia oznaczone „do zamówienia” (bez powtórzeń), np. ['OP', 'oprawka']. */
+function orderedParts(items: Pick<WorkOrderItem, OrderedKey>[], labels: Record<OrderedKey, string>): string[] {
+  const parts = new Set<string>();
+  for (const item of items) for (const key of ORDERED_KEYS) if (item[key]) parts.add(labels[key]);
+  return [...parts];
 }
 
 interface InventoryItem {
@@ -202,6 +210,12 @@ function InventorySelect({ value, onChange, onSelectItem, items, placeholder }: 
   );
 }
 
+// Stare zlecenia mogą nie mieć kwoty — wtedy pokazujemy sumę cen pozycji.
+function displayTotal(order: WorkOrder): string {
+  if (order.totalAmount != null && order.totalAmount !== '') return `${Number(order.totalAmount).toFixed(2)} zł`;
+  return hasPrices(order.items) ? `${itemsTotal(order.items).toFixed(2)} zł` : '—';
+}
+
 function emptyItem(): WorkOrderItem {
   return {
     id: `new-${Math.random().toString(36).slice(2)}`,
@@ -210,6 +224,7 @@ function emptyItem(): WorkOrderItem {
     olSph: '', olCyl: '', olAxis: '', olAdd: '', olPd: '',
     frameModel: '', ownFrame: false, lensType: '', framePrice: '', lensPrice: '',
     inventoryItemIdOp: '', inventoryItemIdOl: '', inventoryItemIdFrame: '',
+    opOrdered: false, olOrdered: false, frameOrdered: false,
   };
 }
 
@@ -217,7 +232,7 @@ function emptyForm() {
   return {
     customerId: '',
     orderNumber: '',
-    receivedAt: new Date().toISOString().split('T')[0],
+    receivedAt: new Date().toLocaleDateString('sv-SE'), // rrrr-mm-dd w czasie lokalnym
     pickupDate: '',
     status: 'pending',
     totalAmount: '',
@@ -229,6 +244,7 @@ function emptyForm() {
 
 export default function WorkOrdersPage() {
   const { t } = useLanguage();
+  const orderedLabels: Record<OrderedKey, string> = { opOrdered: 'OP', olOrdered: 'OL', frameOrdered: t('orderedFrame') };
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -238,6 +254,8 @@ export default function WorkOrdersPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingOrder, setEditingOrder] = useState<WorkOrder | null>(null);
   const [form, setForm] = useState(emptyForm());
+  // false = kwota całkowita liczona automatycznie z pozycji; true = wpisana ręcznie (np. rabat)
+  const [totalManual, setTotalManual] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
@@ -284,6 +302,7 @@ export default function WorkOrdersPage() {
   function openAdd() {
     setEditingOrder(null);
     setForm(emptyForm());
+    setTotalManual(false);
     setCustomerSearch('');
     setShowNewCustomerForm(false);
     setNewCustomer({ name: '', surname: '', phone: '', email: '', smsConsent: true });
@@ -292,6 +311,11 @@ export default function WorkOrdersPage() {
 
   function openEdit(order: WorkOrder) {
     setEditingOrder(order);
+    // Zapisana kwota różna od sumy pozycji = była wpisana ręcznie, więc jej nie nadpisujemy.
+    setTotalManual(
+      order.totalAmount != null && order.totalAmount !== '' &&
+      Math.round(Number(order.totalAmount) * 100) !== Math.round(itemsTotal(order.items) * 100)
+    );
     setForm({
       customerId: order.customerId,
       orderNumber: order.orderNumber,
@@ -316,6 +340,7 @@ export default function WorkOrdersPage() {
         olPd: i.olPd != null ? Number(i.olPd).toFixed(1) : '',
         frameModel: i.frameModel ?? '', ownFrame: i.ownFrame ?? false, lensType: i.lensType ?? '', framePrice: i.framePrice ?? '', lensPrice: i.lensPrice ?? '',
         inventoryItemIdOp: (i as any).inventoryItemIdOp ?? '', inventoryItemIdOl: (i as any).inventoryItemIdOl ?? '', inventoryItemIdFrame: (i as any).inventoryItemIdFrame ?? '',
+        opOrdered: i.opOrdered ?? false, olOrdered: i.olOrdered ?? false, frameOrdered: i.frameOrdered ?? false,
       })) : [emptyItem()],
     });
     setShowModal(true);
@@ -353,6 +378,12 @@ export default function WorkOrdersPage() {
     setForm(prev => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
   }
 
+  const itemsSum = itemsTotal(form.items);
+  const autoTotal = hasPrices(form.items) ? itemsSum.toFixed(2) : '';
+  const effectiveTotal = totalManual ? String(form.totalAmount ?? '') : autoTotal;
+  const amountToPay =
+    effectiveTotal !== '' ? Number(effectiveTotal) - (form.deposit ? Number(form.deposit) : 0) : null;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
@@ -380,7 +411,7 @@ export default function WorkOrdersPage() {
 
       if (!customerId) { setError(t('pleaseSelectCustomer')); setSubmitting(false); return; }
 
-      const payload = { ...form, customerId };
+      const payload = { ...form, totalAmount: effectiveTotal, customerId };
       const url = '/api/work-orders';
       const method = editingOrder ? 'PATCH' : 'POST';
       const body = editingOrder ? { id: editingOrder.id, ...payload } : payload;
@@ -548,6 +579,13 @@ export default function WorkOrdersPage() {
                     >
                       {order.orderNumber}
                     </button>
+                    {orderedParts(order.items, orderedLabels).length > 0 && (
+                      <div className="mt-1">
+                        <span className="px-2 py-0.5 text-xs rounded bg-orange-100 text-orange-800">
+                          {t('awaitingStockBadge')}: {orderedParts(order.items, orderedLabels).join(', ')}
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-900">{order.customerName}</div>
@@ -571,7 +609,7 @@ export default function WorkOrdersPage() {
                     </select>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-700">
-                    {order.totalAmount ? `${parseFloat(order.totalAmount).toFixed(2)} zł` : '—'}
+                    {displayTotal(order)}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-2">
@@ -665,7 +703,7 @@ export default function WorkOrdersPage() {
                 <div>
                   <p className="text-xs text-gray-500 uppercase">{t('totalAmount')}</p>
                   <p className="font-semibold text-gray-900">
-                    {previewOrder.totalAmount ? `${parseFloat(previewOrder.totalAmount).toFixed(2)} zł` : '—'}
+                    {displayTotal(previewOrder)}
                   </p>
                   {previewOrder.deposit && (
                     <p className="text-xs text-gray-500">{t('deposit')}: {parseFloat(previewOrder.deposit).toFixed(2)} zł</p>
@@ -689,6 +727,9 @@ export default function WorkOrdersPage() {
                             <span>OL: {[item.olSph, item.olCyl, item.olAxis && `ax${item.olAxis}`].filter(Boolean).join(' / ')}</span>
                           )}
                           {item.frameModel && <span>{t('frame')}: {item.frameModel}{item.ownFrame ? ` (${t('ownFrame')})` : ''}</span>}
+                          {orderedParts([item], orderedLabels).length > 0 && (
+                            <span className="text-orange-700">{t('awaitingStockBadge')}: {orderedParts([item], orderedLabels).join(', ')}</span>
+                          )}
                           {(item.framePrice || item.lensPrice) && (
                             <span>
                               {item.framePrice ? `${t('frame')}: ${item.framePrice} zł` : ''}
@@ -938,11 +979,31 @@ export default function WorkOrdersPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('totalAmount')} (zł)</label>
                   <input
                     type="number" step="0.01" min="0"
-                    value={form.totalAmount}
-                    onChange={e => setForm(prev => ({ ...prev, totalAmount: e.target.value }))}
+                    value={effectiveTotal}
+                    onChange={e => {
+                      setTotalManual(true);
+                      setForm(prev => ({ ...prev, totalAmount: e.target.value }));
+                    }}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2"
                     placeholder="0.00"
                   />
+                  <p className="text-xs text-gray-500 mt-1">
+                    {t('itemsSum')}: {itemsSum.toFixed(2)} zł
+                    {totalManual && effectiveTotal !== autoTotal && (
+                      <button
+                        type="button"
+                        onClick={() => setTotalManual(false)}
+                        className="ml-2 text-blue-600 hover:underline"
+                      >
+                        {t('recalcTotal')}
+                      </button>
+                    )}
+                  </p>
+                  {amountToPay != null && (
+                    <p className="text-sm font-medium text-gray-800 mt-1">
+                      {t('amountToPay')}: {amountToPay.toFixed(2)} zł
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -965,6 +1026,7 @@ export default function WorkOrdersPage() {
                     className="w-full border border-gray-300 rounded-lg px-3 py-2"
                   />
                 </div>
+
               </div>
 
               {/* Items */}
@@ -1205,7 +1267,15 @@ export default function WorkOrdersPage() {
                                   type="checkbox"
                                   id={`inv-${eye}-${idx}`}
                                   checked={!!item[fieldKey]}
-                                  onChange={e => { if (!e.target.checked) setMultipleItemFields(idx, { [fieldKey]: '', [sphKey]: '', [cylKey]: '' } as any); }}
+                                  onChange={e => {
+                                    if (e.target.checked) return;
+                                    const otherKey = eye === 'op' ? 'inventoryItemIdOl' : 'inventoryItemIdOp';
+                                    const sum = inventoryPriceSum([item[otherKey]], inventoryItems);
+                                    setMultipleItemFields(idx, {
+                                      [fieldKey]: '', [sphKey]: '', [cylKey]: '',
+                                      lensPrice: sum != null ? sum.toFixed(2) : '',
+                                    } as any);
+                                  }}
                                   className="w-4 h-4 text-blue-600 rounded shrink-0"
                                 />
                                 <label htmlFor={`inv-${eye}-${idx}`} className="text-xs text-gray-600 font-medium w-32 shrink-0">
@@ -1216,16 +1286,22 @@ export default function WorkOrdersPage() {
                                   onChange={() => {}}
                                   onSelectItem={inv => {
                                     const updates: Record<string, string> = {};
+                                    const otherKey = eye === 'op' ? 'inventoryItemIdOl' : 'inventoryItemIdOp';
                                     if (inv) {
                                       updates[fieldKey] = inv.id;
+                                      // Brak na stanie → domyślnie „do zamówienia” (można odznaczyć).
+                                      if (inv.quantity <= 0 && inv.id !== item[fieldKey]) (updates as Record<string, unknown>)[eye === 'op' ? 'opOrdered' : 'olOrdered'] = true;
                                       if (inv.sph != null) updates[sphKey] = Number(inv.sph).toFixed(2);
                                       if (inv.cyl != null) updates[cylKey] = Number(inv.cyl).toFixed(2);
-                                      if (inv.price != null) updates['lensPrice'] = Number(inv.price).toFixed(2);
                                     } else {
                                       updates[fieldKey] = '';
                                       updates[sphKey] = '';
                                       updates[cylKey] = '';
                                     }
+                                    // Cena szkieł/soczewek = suma cen sztuk dla OP i OL (nie tylko ostatnio wybranej).
+                                    const sum = inventoryPriceSum([updates[fieldKey], item[otherKey]], inventoryItems);
+                                    if (sum != null) updates['lensPrice'] = sum.toFixed(2);
+                                    else if (!inv) updates['lensPrice'] = '';
                                     setMultipleItemFields(idx, updates as any);
                                   }}
                                   items={inventoryItems}
@@ -1253,6 +1329,7 @@ export default function WorkOrdersPage() {
                                 onSelectItem={inv => {
                                   if (inv) {
                                     const updates: Partial<WorkOrderItem> = { inventoryItemIdFrame: inv.id, frameModel: inv.name };
+                                    if (inv.quantity <= 0 && inv.id !== item.inventoryItemIdFrame) updates.frameOrdered = true;
                                     if (inv.price != null) updates.framePrice = Number(inv.price).toFixed(2);
                                     setMultipleItemFields(idx, updates);
                                   } else {
@@ -1266,6 +1343,25 @@ export default function WorkOrdersPage() {
                           )}
                         </div>
                       )}
+
+                      {/* Do zamówienia u dostawcy — osobno dla każdego elementu */}
+                      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-orange-800" title={t('awaitingStockHint')}>
+                          {t('awaitingStock')}:
+                        </span>
+                        {ORDERED_KEYS.filter(key => key !== 'frameOrdered' || item.type !== 'soczewki_kontaktowe').map(key => (
+                          <label key={key} className="flex items-center gap-1.5 text-sm text-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={item[key]}
+                              onChange={e => setItemField(idx, key, e.target.checked)}
+                              className="h-4 w-4"
+                            />
+                            {orderedLabels[key]}
+                          </label>
+                        ))}
+                        <p className="w-full text-xs text-gray-500">{t('awaitingStockHint')}</p>
+                      </div>
 
                       {/* Frame + Lens / Contact Lens */}
                       {item.type === 'soczewki_kontaktowe' ? (

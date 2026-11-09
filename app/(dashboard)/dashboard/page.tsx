@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { todayRange } from '@/lib/time';
 import { DashboardContent } from '@/components/dashboard-content';
 
 export default async function DashboardPage() {
@@ -13,10 +14,8 @@ export default async function DashboardPage() {
     where: { userId: session.user.id },
   });
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+  // „Dziś” w strefie salonu — serwer działa w UTC.
+  const { start: today, end: tomorrow } = todayRange();
 
   let stats = {
     totalCustomers: 0,

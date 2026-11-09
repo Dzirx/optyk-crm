@@ -2,39 +2,71 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { getUserBusiness } from '@/lib/api/get-user-business';
+import { itemsTotal, hasPrices, type PricedItem } from '@/lib/work-orders/totals';
+import { customerBelongsTo, inventoryBelongsTo, inventoryIdsFromItems } from '@/lib/api/ownership';
+import { MONEY, ValidationError, optionalDate, optionalNumber } from '@/lib/api/validation';
+import { knownErrorResponse } from '@/lib/api/errors';
+import { addLinks, applyAdjustments, orderedInventoryIds, returnOrdersToStock } from '@/lib/work-orders/inventory';
+import { assertOrderNumberFree, lockOrderNumbering, nextOrderNumber } from '@/lib/work-orders/order-number';
 
+const NOT_FOUND_INVENTORY = 'Nie znaleziono pozycji magazynu';
+const STATUSES = ['pending', 'ready', 'completed'];
+
+// Kwota wpisana ręcznie ma pierwszeństwo. Gdy jej brak, liczymy sumę cen pozycji
+// (pozycje już po mapItemData, więc „199,50” jest liczbą 199.5).
+function resolveTotal(totalAmount: unknown, items: PricedItem[] | undefined): number | null {
+  const manual = optionalNumber(totalAmount, { label: 'Kwota', ...MONEY });
+  if (manual !== null) return manual;
+  return hasPrices(items) ? itemsTotal(items) : null;
+}
+
+function parseStatus(status: unknown): string | undefined {
+  if (status === undefined || status === null || status === '') return undefined;
+  if (typeof status !== 'string' || !STATUSES.includes(status)) throw new ValidationError('Nieprawidłowy status zlecenia');
+  return status;
+}
+
+function assertDepositFits(total: unknown, deposit: unknown) {
+  if (total == null || deposit == null) return;
+  if (Number(deposit) > Number(total)) throw new ValidationError('Zaliczka nie może być większa niż kwota zlecenia');
+}
+
+function text(value: unknown, max: number): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  return String(value).slice(0, max);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapItemData(item: any) {
+  const sph = { min: -50, max: 50 };
+  const cyl = { min: -20, max: 20 };
+  const add = { min: 0, max: 10 };
+  const pd = { min: 0, max: 999.9 };
+  const axis = { min: 0, max: 180, integer: true };
   return {
-    type: item.type,
-    opSph: item.opSph !== '' && item.opSph != null ? parseFloat(item.opSph) : null,
-    opCyl: item.opCyl !== '' && item.opCyl != null ? parseFloat(item.opCyl) : null,
-    opAxis: item.opAxis !== '' && item.opAxis != null ? parseInt(item.opAxis) : null,
-    opAdd: item.opAdd !== '' && item.opAdd != null ? parseFloat(item.opAdd) : null,
-    opPd: item.opPd !== '' && item.opPd != null ? parseFloat(item.opPd) : null,
-    olSph: item.olSph !== '' && item.olSph != null ? parseFloat(item.olSph) : null,
-    olCyl: item.olCyl !== '' && item.olCyl != null ? parseFloat(item.olCyl) : null,
-    olAxis: item.olAxis !== '' && item.olAxis != null ? parseInt(item.olAxis) : null,
-    olAdd: item.olAdd !== '' && item.olAdd != null ? parseFloat(item.olAdd) : null,
-    olPd: item.olPd !== '' && item.olPd != null ? parseFloat(item.olPd) : null,
-    frameModel: item.frameModel || null,
-    ownFrame: item.ownFrame || false,
-    lensType: item.lensType || null,
-    framePrice: item.framePrice !== '' && item.framePrice != null ? parseFloat(item.framePrice) : null,
-    lensPrice: item.lensPrice !== '' && item.lensPrice != null ? parseFloat(item.lensPrice) : null,
+    type: text(item.type, 50) ?? 'do_dali',
+    opSph: optionalNumber(item.opSph, { label: 'SPH (OP)', ...sph }),
+    opCyl: optionalNumber(item.opCyl, { label: 'CYL (OP)', ...cyl }),
+    opAxis: optionalNumber(item.opAxis, { label: 'OŚ (OP)', ...axis }),
+    opAdd: optionalNumber(item.opAdd, { label: 'ADD (OP)', ...add }),
+    opPd: optionalNumber(item.opPd, { label: 'PD (OP)', ...pd }),
+    olSph: optionalNumber(item.olSph, { label: 'SPH (OL)', ...sph }),
+    olCyl: optionalNumber(item.olCyl, { label: 'CYL (OL)', ...cyl }),
+    olAxis: optionalNumber(item.olAxis, { label: 'OŚ (OL)', ...axis }),
+    olAdd: optionalNumber(item.olAdd, { label: 'ADD (OL)', ...add }),
+    olPd: optionalNumber(item.olPd, { label: 'PD (OL)', ...pd }),
+    frameModel: text(item.frameModel, 255),
+    ownFrame: item.ownFrame === true,
+    lensType: text(item.lensType, 100),
+    framePrice: optionalNumber(item.framePrice, { label: 'Cena oprawki', ...MONEY }),
+    lensPrice: optionalNumber(item.lensPrice, { label: 'Cena szkieł', ...MONEY }),
     inventoryItemIdOp: item.inventoryItemIdOp || null,
     inventoryItemIdOl: item.inventoryItemIdOl || null,
     inventoryItemIdFrame: item.inventoryItemIdFrame || null,
+    opOrdered: item.opOrdered === true,
+    olOrdered: item.olOrdered === true,
+    frameOrdered: item.frameOrdered === true,
   };
-}
-
-function buildInventoryAdjustments(
-  adjustments: Record<string, number>,
-  idOp: string | null | undefined,
-  idOl: string | null | undefined,
-  delta: number,
-) {
-  if (idOp) adjustments[idOp] = (adjustments[idOp] || 0) + delta;
-  if (idOl) adjustments[idOl] = (adjustments[idOl] || 0) + delta;
 }
 
 // GET - List all work orders for business
@@ -95,62 +127,59 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Data przyjęcia jest wymagana' }, { status: 400 });
     }
 
-    const customer = await db.customer.findFirst({
-      where: { id: customerId, businessId: userBusiness.id },
-    });
-    if (!customer) {
+    if (!(await customerBelongsTo(userBusiness.id, customerId))) {
       return NextResponse.json({ error: 'Nie znaleziono klienta' }, { status: 404 });
     }
-
-    let orderNumber: string;
-    if (customOrderNumber?.trim()) {
-      orderNumber = customOrderNumber.trim();
-    } else {
-      const year = new Date().getFullYear();
-      const count = await db.workOrder.count({ where: { businessId: userBusiness.id } });
-      orderNumber = `ZL/${year}/${String(count + 1).padStart(3, '0')}`;
+    if (items !== undefined && !Array.isArray(items)) {
+      return NextResponse.json({ error: 'Nieprawidłowe pozycje zlecenia' }, { status: 400 });
+    }
+    if (!(await inventoryBelongsTo(userBusiness.id, inventoryIdsFromItems(items)))) {
+      return NextResponse.json({ error: NOT_FOUND_INVENTORY }, { status: 404 });
     }
 
-    // Build inventory adjustments for new items
-    const inventoryAdjustments: Record<string, number> = {};
-    for (const item of (items || [])) {
-      buildInventoryAdjustments(inventoryAdjustments, item.inventoryItemIdOp || null, item.inventoryItemIdOl || null, -1);
-      if (item.inventoryItemIdFrame) inventoryAdjustments[item.inventoryItemIdFrame] = (inventoryAdjustments[item.inventoryItemIdFrame] || 0) - 1;
-    }
+    // Walidacja przed transakcją: zły format → 400.
+    const itemRows = (items || []).map(mapItemData);
+    const total = resolveTotal(totalAmount, itemRows);
+    const depositValue = optionalNumber(deposit, { label: 'Zaliczka', ...MONEY });
+    assertDepositFits(total, depositValue);
+    const data = {
+      receivedAt: optionalDate(receivedAt, 'data przyjęcia')!,
+      pickupDate: optionalDate(pickupDate, 'data odbioru'),
+      status: parseStatus(status) ?? 'pending',
+      notes: text(notes, 10_000),
+    };
+    const custom = typeof customOrderNumber === 'string' ? customOrderNumber.trim().slice(0, 50) : '';
+
+    const adjustments: Record<string, number> = {};
+    for (const row of itemRows) addLinks(adjustments, row, -1);
 
     const workOrder = await db.$transaction(async (tx) => {
+      await lockOrderNumbering(tx, userBusiness.id);
+      let orderNumber = custom;
+      if (orderNumber) await assertOrderNumberFree(tx, userBusiness.id, orderNumber);
+      else orderNumber = await nextOrderNumber(tx, userBusiness.id);
+
       const created = await tx.workOrder.create({
         data: {
           businessId: userBusiness.id,
           customerId,
           orderNumber,
-          receivedAt: new Date(receivedAt),
-          pickupDate: pickupDate ? new Date(pickupDate) : null,
-          status: status || 'pending',
-          totalAmount: totalAmount ? parseFloat(totalAmount) : null,
-          deposit: deposit ? parseFloat(deposit) : null,
-          notes: notes || null,
-          items: {
-            create: (items || []).map(mapItemData),
-          },
+          ...data,
+          totalAmount: total,
+          deposit: depositValue,
+          items: { create: itemRows },
         },
         include: { items: true, customer: true },
       });
 
-      for (const [id, delta] of Object.entries(inventoryAdjustments)) {
-        if (delta !== 0) {
-          await tx.inventoryItem.update({
-            where: { id },
-            data: { quantity: { increment: delta } },
-          });
-        }
-      }
-
+      await applyAdjustments(tx, adjustments, orderedInventoryIds(itemRows));
       return created;
     });
 
     return NextResponse.json({ workOrder }, { status: 201 });
   } catch (error) {
+    const known = knownErrorResponse(error);
+    if (known) return known;
     console.error('Error creating work order:', error);
     return NextResponse.json({ error: 'Nie udało się utworzyć zlecenia' }, { status: 500 });
   }
@@ -183,104 +212,104 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Nie znaleziono zlecenia' }, { status: 404 });
     }
 
+    // Każdy id z body musi należeć do tego salonu (klient, towary) lub do tego zlecenia (pozycje).
+    if (customerId !== undefined && customerId !== existing.customerId) {
+      if (!(await customerBelongsTo(userBusiness.id, customerId))) {
+        return NextResponse.json({ error: 'Nie znaleziono klienta' }, { status: 404 });
+      }
+    }
+    if (items !== undefined) {
+      if (!Array.isArray(items)) {
+        return NextResponse.json({ error: 'Nieprawidłowe pozycje zlecenia' }, { status: 400 });
+      }
+      const ownItemIds = new Set(
+        (await db.workOrderItem.findMany({ where: { workOrderId: id }, select: { id: true } })).map((i) => i.id),
+      );
+      const foreignItem = items.some(
+        (i: { id?: unknown }) =>
+          i.id != null && !(typeof i.id === 'string' && (i.id.startsWith('new-') || ownItemIds.has(i.id))),
+      );
+      if (foreignItem) {
+        return NextResponse.json({ error: 'Nie znaleziono pozycji zlecenia' }, { status: 404 });
+      }
+      if (!(await inventoryBelongsTo(userBusiness.id, inventoryIdsFromItems(items)))) {
+        return NextResponse.json({ error: NOT_FOUND_INVENTORY }, { status: 404 });
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const incoming = (items ?? []) as any[];
+    const isDbId = (itemId: unknown) => typeof itemId === 'string' && !itemId.startsWith('new-');
+    const toUpdate = incoming.filter((i) => isDbId(i.id)).map((i) => ({ id: i.id as string, data: mapItemData(i) }));
+    const toCreate = incoming.filter((i) => !isDbId(i.id)).map(mapItemData);
+    const itemRows = items !== undefined ? [...toUpdate.map((u) => u.data), ...toCreate] : undefined;
+
+    // Pola, których nie ma w żądaniu, zostają bez zmian (np. zmiana statusu z listy
+    // nie może kasować daty odbioru).
+    const total = totalAmount !== undefined ? resolveTotal(totalAmount, itemRows) : existing.totalAmount;
+    const depositValue = deposit !== undefined ? optionalNumber(deposit, { label: 'Zaliczka', ...MONEY }) : existing.deposit;
+    assertDepositFits(total, depositValue);
+    const fields = {
+      customerId: customerId ?? existing.customerId,
+      receivedAt: receivedAt ? optionalDate(receivedAt, 'data przyjęcia')! : existing.receivedAt,
+      pickupDate: pickupDate !== undefined ? optionalDate(pickupDate, 'data odbioru') : existing.pickupDate,
+      status: parseStatus(status) ?? existing.status,
+      totalAmount: total,
+      deposit: depositValue,
+      notes: notes !== undefined ? text(notes, 10_000) : existing.notes,
+    };
+    const newNumber = typeof orderNumber === 'string' ? orderNumber.trim().slice(0, 50) : '';
+
     const workOrder = await db.$transaction(async (tx) => {
+      if (newNumber && newNumber !== existing.orderNumber) {
+        await lockOrderNumbering(tx, userBusiness.id);
+        await assertOrderNumberFree(tx, userBusiness.id, newNumber, id);
+      }
+
       if (items !== undefined) {
-        const isDbId = (itemId: string) => !itemId.startsWith('new-');
         const existingItems = await tx.workOrderItem.findMany({
           where: { workOrderId: id },
           select: { id: true, inventoryItemIdOp: true, inventoryItemIdOl: true, inventoryItemIdFrame: true },
         });
+        const incomingIds = new Set(toUpdate.map((i) => i.id));
+        const toDelete = existingItems.filter((ei) => !incomingIds.has(ei.id));
 
-        const incomingDbItems = (items as any[]).filter(i => i.id && isDbId(i.id));
-        const incomingNewItems = (items as any[]).filter(i => !i.id || !isDbId(i.id));
-        const incomingIds = incomingDbItems.map((i: any) => i.id as string);
-
-        const toDelete = existingItems.filter(ei => !incomingIds.includes(ei.id));
-        const toUpdate = incomingDbItems;
-        const toCreate = incomingNewItems;
-
-        // Build inventory adjustments
-        const inventoryAdjustments: Record<string, number> = {};
-
-        // Deleted items → return to inventory
-        for (const item of toDelete) {
-          buildInventoryAdjustments(inventoryAdjustments, item.inventoryItemIdOp, item.inventoryItemIdOl, +1);
-          if (item.inventoryItemIdFrame) inventoryAdjustments[item.inventoryItemIdFrame] = (inventoryAdjustments[item.inventoryItemIdFrame] || 0) + 1;
+        // Bilans magazynu: stare powiązania wracają na stan, nowe są pobierane.
+        const adjustments: Record<string, number> = {};
+        for (const item of toDelete) addLinks(adjustments, item, +1);
+        for (const row of toCreate) addLinks(adjustments, row, -1);
+        for (const { id: itemId, data } of toUpdate) {
+          const old = existingItems.find((ei) => ei.id === itemId);
+          if (!old) continue;
+          addLinks(adjustments, old, +1);
+          addLinks(adjustments, data, -1);
         }
 
-        // New items → take from inventory
-        for (const item of toCreate) {
-          buildInventoryAdjustments(inventoryAdjustments, item.inventoryItemIdOp || null, item.inventoryItemIdOl || null, -1);
-      if (item.inventoryItemIdFrame) inventoryAdjustments[item.inventoryItemIdFrame] = (inventoryAdjustments[item.inventoryItemIdFrame] || 0) - 1;
-        }
-
-        // Updated items → diff old vs new inventory links
-        for (const newItem of toUpdate) {
-          const oldItem = existingItems.find(ei => ei.id === newItem.id);
-          if (!oldItem) continue;
-
-          const oldOp = oldItem.inventoryItemIdOp || null;
-          const newOp = newItem.inventoryItemIdOp || null;
-          if (oldOp !== newOp) {
-            if (oldOp) inventoryAdjustments[oldOp] = (inventoryAdjustments[oldOp] || 0) + 1;
-            if (newOp) inventoryAdjustments[newOp] = (inventoryAdjustments[newOp] || 0) - 1;
-          }
-
-          const oldOl = oldItem.inventoryItemIdOl || null;
-          const newOl = newItem.inventoryItemIdOl || null;
-          if (oldOl !== newOl) {
-            if (oldOl) inventoryAdjustments[oldOl] = (inventoryAdjustments[oldOl] || 0) + 1;
-            if (newOl) inventoryAdjustments[newOl] = (inventoryAdjustments[newOl] || 0) - 1;
-          }
-
-          const oldFrame = oldItem.inventoryItemIdFrame || null;
-          const newFrame = newItem.inventoryItemIdFrame || null;
-          if (oldFrame !== newFrame) {
-            if (oldFrame) inventoryAdjustments[oldFrame] = (inventoryAdjustments[oldFrame] || 0) + 1;
-            if (newFrame) inventoryAdjustments[newFrame] = (inventoryAdjustments[newFrame] || 0) - 1;
-          }
-        }
-
-        // Apply item changes
         if (toDelete.length > 0) {
-          await tx.workOrderItem.deleteMany({ where: { id: { in: toDelete.map(i => i.id) } } });
+          await tx.workOrderItem.deleteMany({ where: { id: { in: toDelete.map((i) => i.id) }, workOrderId: id } });
         }
-        for (const item of toUpdate) {
-          await tx.workOrderItem.update({ where: { id: item.id }, data: mapItemData(item) });
+        for (const { id: itemId, data } of toUpdate) {
+          // workOrderId w warunku: druga linia obrony — pozycja musi należeć do tego zlecenia.
+          await tx.workOrderItem.update({ where: { id: itemId, workOrderId: id }, data });
         }
-        for (const item of toCreate) {
-          await tx.workOrderItem.create({ data: { workOrderId: id, ...mapItemData(item) } });
+        for (const row of toCreate) {
+          await tx.workOrderItem.create({ data: { workOrderId: id, ...row } });
         }
 
-        // Apply inventory adjustments
-        for (const [invId, delta] of Object.entries(inventoryAdjustments)) {
-          if (delta !== 0) {
-            await tx.inventoryItem.update({
-              where: { id: invId },
-              data: { quantity: { increment: delta } },
-            });
-          }
-        }
+        await applyAdjustments(tx, adjustments, orderedInventoryIds(itemRows ?? []));
       }
 
       return tx.workOrder.update({
         where: { id },
-        data: {
-          customerId: customerId ?? existing.customerId,
-          orderNumber: orderNumber?.trim() || existing.orderNumber,
-          receivedAt: receivedAt ? new Date(receivedAt) : existing.receivedAt,
-          pickupDate: pickupDate ? new Date(pickupDate) : null,
-          status: status ?? existing.status,
-          totalAmount: totalAmount !== undefined ? (totalAmount !== '' ? parseFloat(totalAmount) : null) : existing.totalAmount,
-          deposit: deposit !== undefined ? (deposit !== '' ? parseFloat(deposit) : null) : existing.deposit,
-          notes: notes !== undefined ? notes || null : existing.notes,
-        },
+        data: { ...fields, orderNumber: newNumber || existing.orderNumber },
         include: { items: { orderBy: { id: 'asc' } }, customer: true },
       });
     });
 
     return NextResponse.json({ workOrder });
   } catch (error) {
+    const known = knownErrorResponse(error);
+    if (known) return known;
     console.error('Error updating work order:', error);
     return NextResponse.json({ error: 'Nie udało się zaktualizować zlecenia' }, { status: 500 });
   }
@@ -313,28 +342,10 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Nie znaleziono zlecenia' }, { status: 404 });
     }
 
-    // Return all linked inventory items before cascade delete
-    const itemsToReturn = await db.workOrderItem.findMany({
-      where: { workOrderId: id },
-      select: { inventoryItemIdOp: true, inventoryItemIdOl: true, inventoryItemIdFrame: true },
-    });
-
-    const inventoryAdjustments: Record<string, number> = {};
-    for (const item of itemsToReturn) {
-      buildInventoryAdjustments(inventoryAdjustments, item.inventoryItemIdOp, item.inventoryItemIdOl, +1);
-      if (item.inventoryItemIdFrame) inventoryAdjustments[item.inventoryItemIdFrame] = (inventoryAdjustments[item.inventoryItemIdFrame] || 0) + 1;
-    }
-
+    // Odczyt pozycji i zwrot towaru w tej samej transakcji co usunięcie.
     await db.$transaction(async (tx) => {
+      await returnOrdersToStock(tx, { workOrderId: id });
       await tx.workOrder.delete({ where: { id } });
-      for (const [invId, delta] of Object.entries(inventoryAdjustments)) {
-        if (delta !== 0) {
-          await tx.inventoryItem.update({
-            where: { id: invId },
-            data: { quantity: { increment: delta } },
-          });
-        }
-      }
     });
 
     return NextResponse.json({ message: 'Work order deleted successfully' });

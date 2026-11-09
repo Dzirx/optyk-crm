@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { SmsProviderFactory } from '@/lib/sms/providers/factory';
+import { sendSafely } from '@/lib/sms/delivery';
 import { getUserBusiness } from '@/lib/api/get-user-business';
+import { renderSmsTemplate } from '@/lib/sms/render';
 
 export async function POST(req: NextRequest) {
-  let workOrderId: string | undefined;
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -19,12 +20,11 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    workOrderId = body.workOrderId;
+    const workOrderId: unknown = body.workOrderId;
 
-    if (!workOrderId) {
+    if (!workOrderId || typeof workOrderId !== 'string') {
       return NextResponse.json({ error: 'Wymagane ID zlecenia' }, { status: 400 });
     }
-
 
     const workOrder = await db.workOrder.findFirst({
       where: { id: workOrderId, businessId: userBusiness.id },
@@ -48,44 +48,43 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Szablon SMS z prośbą o opinię nie jest skonfigurowany' }, { status: 400 });
     }
 
-    const customerFullName = `${workOrder.customer.name} ${workOrder.customer.surname}`;
-    const orderDate = new Date(workOrder.receivedAt).toLocaleDateString('pl-PL');
+    const message = renderSmsTemplate(template, {
+      name: `${workOrder.customer.name} ${workOrder.customer.surname}`,
+      staff: userBusiness.name,
+      link: userBusiness.googleReviewUrl,
+      date: workOrder.receivedAt,
+    });
 
-    const message = template
-      .replace(/{name}/g, customerFullName)
-      .replace(/{staff}/g, userBusiness.name)
-      .replace(/{link}/g, userBusiness.googleReviewUrl)
-      .replace(/{date}/g, orderDate);
+    let smsProvider;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      smsProvider = SmsProviderFactory.create(userBusiness.smsProvider as any, userBusiness.smsConfig as any);
+    } catch {
+      return NextResponse.json({ error: 'Nieprawidłowa konfiguracja dostawcy SMS' }, { status: 400 });
+    }
 
-    const smsProvider = SmsProviderFactory.create(
-      userBusiness.smsProvider as any,
-      userBusiness.smsConfig as any
-    );
+    // Rezerwacja przed wysyłką: podwójne kliknięcie nie wyśle drugiego SMS.
+    const claim = await db.workOrder.updateMany({
+      where: { id: workOrderId, businessId: userBusiness.id, reviewSmsStatus: { not: 'sent' } },
+      data: { reviewSmsStatus: 'sent', reviewSmsSentAt: new Date() },
+    });
+    if (claim.count !== 1) {
+      return NextResponse.json({ error: 'Ten SMS został już wysłany' }, { status: 409 });
+    }
 
-    const smsResult = await smsProvider.sendSms(workOrder.customer.phone, message);
+    const smsResult = await sendSafely(smsProvider, workOrder.customer.phone, message);
 
     if (!smsResult.success) {
       await db.workOrder.update({
         where: { id: workOrderId },
-        data: { reviewSmsStatus: 'failed' },
+        data: { reviewSmsStatus: 'failed', reviewSmsSentAt: null },
       });
-      return NextResponse.json({ error: smsResult.error || 'SMS provider returned failure' }, { status: 500 });
+      return NextResponse.json({ error: smsResult.error || 'Dostawca SMS zwrócił błąd' }, { status: 500 });
     }
-
-    await db.workOrder.update({
-      where: { id: workOrderId },
-      data: { reviewSmsStatus: 'sent', reviewSmsSentAt: new Date() },
-    });
 
     return NextResponse.json({ message: 'Review SMS sent successfully', smsResult });
   } catch (error) {
     console.error('Error sending SMS:', error);
-    if (workOrderId) {
-      await db.workOrder.update({ where: { id: workOrderId }, data: { reviewSmsStatus: 'failed' } }).catch(() => {});
-    }
-    return NextResponse.json({
-      error: 'Nie udało się wysłać SMS',
-      details: error instanceof Error ? error.message : 'Nieznany błąd',
-    }, { status: 500 });
+    return NextResponse.json({ error: 'Nie udało się wysłać SMS' }, { status: 500 });
   }
 }
