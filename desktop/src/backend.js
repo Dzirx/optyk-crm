@@ -64,6 +64,7 @@ class Backend {
     this.configFile = path.join(o.dataDir, 'config.json');
     this.appProc = null;
     this.cronTimer = null;
+    this.cronFirstTimer = null;
     this.pgStarted = false;
     this.config = null;
     this.pgPort = null;
@@ -258,6 +259,16 @@ class Backend {
     this.log(r.out.trim());
   }
 
+  /** Historia magazynu dla salonów, które jej nie mają (po aktualizacji schematu). Błąd nie blokuje startu: historię założy pierwsza zmiana stanu. */
+  async initStockHistory() {
+    try {
+      const r = await this.runNode(path.join(this.appDir, 'init-stock.js'), [], { cwd: this.appDir, env: this.appEnv() });
+      this.log(r.out.trim());
+    } catch (e) {
+      this.log(`init-stock: ${e.message || e}`);
+    }
+  }
+
   /** Czy w bazie jest konto do logowania (po aktywacji). */
   async hasUsers() {
     const r = await this.run(
@@ -327,7 +338,8 @@ class Backend {
     throw new Error('Serwer aplikacji nie odpowiedział w wymaganym czasie (zobacz logs/app.log).');
   }
 
-  // Wysyłka zaplanowanych SMS-ów. W chmurze robi to zewnętrzny cron.
+  // Wysyłka zaplanowanych SMS-ów co 5 minut (w chmurze robi to wbudowany harmonogram, lib/sms/scheduler.ts).
+  // Pierwsze uruchomienie 30 s po starcie, żeby zaległe SMS-y nie czekały pełnych 5 minut.
   startCron() {
     const call = () => {
       const req = http.get(
@@ -337,6 +349,8 @@ class Backend {
       );
       req.on('error', (e) => this.log(`cron: ${e.message}`));
     };
+    this.cronFirstTimer = setTimeout(call, 30 * 1000);
+    this.cronFirstTimer.unref();
     this.cronTimer = setInterval(call, CRON_INTERVAL_MS);
     this.cronTimer.unref();
   }
@@ -356,6 +370,7 @@ class Backend {
     onStatus('Aktualizacja struktury bazy…');
     await this.startApp(); // wybór portu potrzebny do NEXTAUTH_URL
     await this.pushSchema();
+    await this.initStockHistory();
     return { firstRun };
   }
 
@@ -371,6 +386,7 @@ class Backend {
   async stop() {
     if (this.stopping) return;
     this.stopping = true;
+    if (this.cronFirstTimer) clearTimeout(this.cronFirstTimer);
     if (this.cronTimer) clearInterval(this.cronTimer);
     if (this.appProc) {
       const p = this.appProc;

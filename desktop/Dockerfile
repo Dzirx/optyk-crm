@@ -26,6 +26,8 @@ RUN mkdir -p /out/app/.next /out/app/node_modules/.prisma /out/app/node_modules/
     && cp -rL node_modules/@prisma/client/. /out/app/node_modules/@prisma/client/ \
     && "$(find node_modules -path '*/esbuild/bin/esbuild' | head -1)" lib/db/local-user.ts --bundle --platform=node --format=cjs \
          --external:@prisma/client --outfile=/out/app/local-user.js \
+    && "$(find node_modules -path '*/esbuild/bin/esbuild' | head -1)" lib/db/init-stock.ts --bundle --platform=node --format=cjs \
+         --external:@prisma/client --outfile=/out/app/init-stock.js \
     && cp prisma/schema.prisma /out/tools/prisma/schema.prisma
 
 # Prisma CLI (db push) z silnikiem schematu dla Windows.
@@ -75,7 +77,7 @@ RUN find payload \( -name 'libquery_engine-*' -o -name 'schema-engine-debian*' -
     && test -f payload/app/node_modules/.prisma/client/query_engine-windows.dll.node \
     && test -f payload/tools/node_modules/@prisma/engines/schema-engine-windows.exe \
     && test -f payload/pg/bin/postgres.exe \
-    && test -f payload/app/server.js && test -f payload/app/local-user.js \
+    && test -f payload/app/server.js && test -f payload/app/local-user.js && test -f payload/app/init-stock.js \
     && test -f src/license-public-key.js
 RUN npx electron-builder --win nsis --x64 --publish never
 

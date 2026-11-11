@@ -4,9 +4,11 @@ import type { Prisma } from '@prisma/client';
 import { withBusiness, zodMessage } from '@/lib/api/handler';
 import { queryObject } from '@/lib/api/schemas/common';
 import { workOrderSearchWhere } from '@/lib/api/search';
-import { customerBelongsTo, inventoryBelongsTo, inventoryIdsFromItems } from '@/lib/api/ownership';
+import { assertInventoryLinkable, customerBelongsTo, inventoryBelongsTo, inventoryIdsFromItems } from '@/lib/api/ownership';
+import { withOrderSmsFailures } from '@/lib/sms/failure-lookup';
 import { createWorkOrderSchema, listWorkOrdersQuerySchema } from '@/lib/api/schemas/work-orders';
 import { NOT_FOUND_INVENTORY, assertDepositFits, resolveTotal } from '@/lib/work-orders/amounts';
+import { STOCK_TX_TIMEOUT, lockStock } from '@/lib/stock-count/lock';
 import { addLinks, applyAdjustments, orderedInventoryIds } from '@/lib/work-orders/inventory';
 import { assertOrderNumberFree, lockOrderNumbering, nextOrderNumber } from '@/lib/work-orders/order-number';
 
@@ -37,22 +39,22 @@ export const GET = withBusiness(
       // `id` rozstrzyga remisy, żeby strony nie nakładały się na siebie.
       orderBy: [{ receivedAt: 'desc' as const }, { createdAt: 'desc' as const }, { id: 'desc' as const }],
     };
-    const shape = (orders: Awaited<ReturnType<typeof db.workOrder.findMany<typeof query>>>) =>
-      orders.map((order) => ({
+    const shape = async (found: Awaited<ReturnType<typeof db.workOrder.findMany<typeof query>>>) =>
+      (await withOrderSmsFailures(found)).map((order) => ({
         ...order,
         customerName: `${order.customer.name} ${order.customer.surname}`,
         customerPhone: order.customer.phone,
       }));
 
     if (page === undefined) {
-      return NextResponse.json({ workOrders: shape(await db.workOrder.findMany(query)) });
+      return NextResponse.json({ workOrders: await shape(await db.workOrder.findMany(query)) });
     }
 
     const [total, orders] = await db.$transaction([
       db.workOrder.count({ where }),
       db.workOrder.findMany({ ...query, skip: (page - 1) * pageSize, take: pageSize }),
     ]);
-    return NextResponse.json({ workOrders: shape(orders), total, page, pageSize });
+    return NextResponse.json({ workOrders: await shape(orders), total, page, pageSize });
   },
   { error: 'Nie udało się pobrać zleceń' },
 );
@@ -84,6 +86,8 @@ export const POST = withBusiness(
     for (const row of itemRows) addLinks(adjustments, row, -1);
 
     const workOrder = await db.$transaction(async (tx) => {
+      await lockStock(tx, business.id); // zawsze przed numeracją i wierszami towarów
+      await assertInventoryLinkable(tx, business.id, inventoryIdsFromItems(items)); // towar mógł zostać usunięty przed blokadą
       await lockOrderNumbering(tx, business.id);
       let orderNumber = body.orderNumber;
       if (orderNumber) await assertOrderNumberFree(tx, business.id, orderNumber);
@@ -102,9 +106,14 @@ export const POST = withBusiness(
         include: { items: true, customer: true },
       });
 
-      await applyAdjustments(tx, adjustments, orderedInventoryIds(itemRows));
+      await applyAdjustments(
+        tx,
+        { businessId: business.id, workOrderId: created.id, orderNumber: created.orderNumber, userId: business.userId },
+        adjustments,
+        orderedInventoryIds(itemRows),
+      );
       return created;
-    });
+    }, STOCK_TX_TIMEOUT);
 
     return NextResponse.json({ workOrder }, { status: 201 });
   },

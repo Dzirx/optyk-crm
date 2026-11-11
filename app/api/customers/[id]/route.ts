@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { withBusiness } from '@/lib/api/handler';
 import { updateCustomerSchema } from '@/lib/api/schemas/customers';
+import { STOCK_TX_TIMEOUT, lockStock } from '@/lib/stock-count/lock';
 import { returnOrdersToStock } from '@/lib/work-orders/inventory';
 
 const NOT_FOUND = 'Nie znaleziono klienta';
@@ -52,9 +53,10 @@ export const DELETE = withBusiness(
     // Usunięcie klienta kasuje kaskadowo jego wizyty i zlecenia. Towar z pozycji
     // zleceń wraca najpierw na stan magazynu — w tej samej transakcji.
     await db.$transaction(async (tx) => {
-      await returnOrdersToStock(tx, { workOrder: { customerId: customer.id, businessId: business.id } });
+      await lockStock(tx, business.id);
+      await returnOrdersToStock(tx, business.id, { workOrder: { customerId: customer.id, businessId: business.id } }, business.userId);
       await tx.customer.delete({ where: { id: customer.id } });
-    });
+    }, STOCK_TX_TIMEOUT);
 
     return NextResponse.json({ message: 'Customer deleted successfully' });
   },

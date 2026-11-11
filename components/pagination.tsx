@@ -1,6 +1,7 @@
 'use client';
 
 import { useLanguage } from '@/lib/i18n/language-context';
+import { resultsLabel } from '@/lib/plural';
 
 interface PaginationProps {
   page: number;
@@ -11,12 +12,12 @@ interface PaginationProps {
 
 /** Prosty pager pod tabelą: Poprzednia / Strona X z Y / Następna oraz liczba wyników. */
 export function Pagination({ page, pageSize, total, onPageChange }: PaginationProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const pages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <div className="mt-4 flex items-center justify-between text-sm text-gray-600">
-      <span>{total} {t('resultsCount')}</span>
+      <span>{resultsLabel(total, language)}</span>
       <div className="flex items-center gap-3">
         <button
           type="button"

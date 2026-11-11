@@ -1,8 +1,16 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { Suspense, useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Pagination } from '@/components/pagination';
+import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 import { useLanguage } from '@/lib/i18n/language-context';
+import { MAX_BULK_RECIPIENTS } from '@/lib/sms/limits';
+import { newIdempotencyKey } from '@/lib/sms/campaign-helpers';
+import { CampaignProgress } from './_components/campaign-progress';
+import { CampaignHistory } from './_components/campaign-history';
+import { CampaignDetails } from './_components/campaign-details';
 
 interface Customer {
   id: string;
@@ -10,17 +18,16 @@ interface Customer {
   surname: string;
   phone: string;
   smsConsent: boolean;
-  visits: { id: string; visitDate: string }[];
+  visitCount: number;
 }
 
 const SMS_LIMIT = 160;
+const PAGE_SIZE = 50;
 
-const VISIT_RANGES = [
-  { label: 'Brak wizyt', min: 0, max: 0 },
-  { label: '1–3 wizyty', min: 1, max: 3 },
-  { label: '4–9 wizyt', min: 4, max: 9 },
-  { label: '10+ wizyt', min: 10, max: Infinity },
-];
+// Kolejność jak w VISIT_RANGES w lib/customers/list-filter.ts: indeks idzie do serwera jako `visitRanges`.
+const VISIT_RANGES = ['Brak wizyt', '1–3 wizyty', '4–9 wizyt', '10+ wizyt'];
+
+type SortBy = 'name-asc' | 'name-desc' | 'visits-desc' | 'visits-asc' | 'date-desc' | 'date-asc';
 
 function FilterSection({ title, children, defaultOpen = true }: {
   title: string;
@@ -48,88 +55,128 @@ function FilterSection({ title, children, defaultOpen = true }: {
   );
 }
 
+const TAB = 'px-4 py-2 text-sm font-medium border-b-2 -mb-px';
+
+/** Strona wiadomości: zakładki „Nowa wiadomość” / „Historia wysyłek”; stan w adresie (?tab=history&campaign=id). */
 export default function MessagesPage() {
+  return (
+    <Suspense fallback={null}>
+      <MessagesTabs />
+    </Suspense>
+  );
+}
+
+function MessagesTabs() {
+  const { t } = useLanguage();
+  const router = useRouter();
+  const params = useSearchParams();
+  const campaignId = params.get('campaign');
+  const history = params.get('tab') === 'history' || !!campaignId;
+  const openCampaign = (id: string) => router.push(`/messages?tab=history&campaign=${id}`);
+
+  return (
+    <div className="text-gray-900">
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold text-gray-900">{t('messagesTitle')}</h1>
+        <p className="text-gray-500 text-sm mt-1">{t('messagesSubtitle')}</p>
+      </div>
+      <div role="tablist" className="flex border-b border-gray-200 mb-5">
+        <Link href="/messages" role="tab" aria-selected={!history} data-testid="tab-compose"
+          className={`${TAB} ${!history ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800'}`}>
+          {t('messagesTabNew')}
+        </Link>
+        <Link href="/messages?tab=history" role="tab" aria-selected={history} data-testid="tab-history"
+          className={`${TAB} ${history ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800'}`}>
+          {t('messagesTabHistory')}
+        </Link>
+      </div>
+      {/* Kreator zostaje zamontowany, więc zaznaczenie i treść przeżywają przełączenie zakładki. */}
+      <div className={history ? 'hidden' : ''}>
+        <Composer onOpenCampaign={openCampaign} />
+      </div>
+      {history && (campaignId
+        ? <CampaignDetails key={campaignId} campaignId={campaignId} onOpen={openCampaign} />
+        : <CampaignHistory onOpen={openCampaign} />)}
+    </div>
+  );
+}
+
+function Composer({ onOpenCampaign }: { onOpenCampaign: (id: string) => void }) {
   const { t } = useLanguage();
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [total, setTotal] = useState(0);
+  const [selectableTotal, setSelectableTotal] = useState(0);
+  const [counts, setCounts] = useState({ consented: 0, notConsented: 0 });
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
+  // Zaznaczenie żyje poza listą: przeżywa zmianę strony, wyszukiwania i filtrów.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   const [consentFilter, setConsentFilter] = useState<Set<string>>(new Set(['true']));
   const [visitFilter, setVisitFilter] = useState<Set<string>>(new Set());
-  const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'visits-desc' | 'visits-asc' | 'date-desc' | 'date-asc'>('name-asc');
+  const [sortBy, setSortBy] = useState<SortBy>('name-asc');
   const [visitDateFrom, setVisitDateFrom] = useState('');
   const [visitDateTo, setVisitDateTo] = useState('');
   const [sending, setSending] = useState(false);
-  const [result, setResult] = useState<{ sent: number; failed: number } | null>(null);
+  const [selectingAll, setSelectingAll] = useState(false);
+  const [selectNotice, setSelectNotice] = useState('');
+  // Wysyłka w tle: karta postępu świeżej kampanii, historia i okno szczegółów.
+  const [progressId, setProgressId] = useState<string | null>(null);
+  // Jeden klucz idempotencji na „napisanie wiadomości”: powtórzone żądanie nie tworzy drugiej kampanii.
+  const idempotencyKey = useRef<string | null>(null);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    fetch('/api/customers?withVisits=1')
-      .then(r => r.json())
-      .then(data => setCustomers(data.customers || []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
 
   function toggleSet<T extends string>(set: Set<T>, value: T): Set<T> {
     const next = new Set(set);
-    next.has(value) ? next.delete(value) : next.add(value);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
     return next;
   }
 
-  const filtered = useMemo(() => {
-    let list = [...customers];
+  // Parametry filtrów dla /api/customers i /api/customers/ids (zgoda: oba lub żaden = bez filtra).
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
+  const filterParams = (extra: Record<string, string> = {}) => {
+    const params = new URLSearchParams(extra);
+    if (debouncedSearch) params.set('q', debouncedSearch);
+    if (consentFilter.size === 1) params.set('smsConsent', [...consentFilter][0]);
+    if (visitFilter.size > 0) params.set('visitRanges', [...visitFilter].sort().join(','));
+    if (visitDateFrom) params.set('visitFrom', visitDateFrom);
+    if (visitDateTo) params.set('visitTo', visitDateTo);
+    return params;
+  };
+  const filterKey = filterParams().toString() + '|' + sortBy;
 
-    if (consentFilter.size > 0 && consentFilter.size < 2) {
-      const wantConsent = consentFilter.has('true');
-      list = list.filter(c => c.smsConsent === wantConsent);
-    }
+  // Zmiana filtrów, frazy albo sortowania wraca na stronę 1.
+  const [pageState, setPageState] = useState({ key: filterKey, page: 1 });
+  const page = pageState.key === filterKey ? pageState.page : 1;
+  const setPage = (p: number) => setPageState({ key: filterKey, page: p });
+  const requestSeq = useRef(0);
 
-    if (visitFilter.size > 0) {
-      list = list.filter(c => {
-        const count = c.visits?.length ?? 0;
-        return [...visitFilter].some(key => {
-          const range = VISIT_RANGES[parseInt(key)];
-          return range && count >= range.min && count <= range.max;
-        });
+  useEffect(() => {
+    const seq = ++requestSeq.current;
+    setLoading(true);
+    const params = filterParams({ page: String(page), pageSize: String(PAGE_SIZE), sort: sortBy });
+    fetch(`/api/customers?${params}`)
+      .then(async (r) => ({ ok: r.ok, data: await r.json() }))
+      .then(({ ok, data }) => {
+        if (seq !== requestSeq.current) return; // nowsze żądanie wyprzedziło to
+        if (!ok) throw new Error(data.error);
+        const lastPage = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
+        }
+        setCustomers(data.customers || []);
+        setTotal(data.total);
+        setSelectableTotal(data.selectableTotal ?? 0);
+        setCounts({ consented: data.counts?.consented ?? 0, notConsented: data.counts?.notConsented ?? 0 });
+        setLoading(false);
+      })
+      .catch(() => {
+        if (seq === requestSeq.current) setLoading(false);
       });
-    }
-
-    if (visitDateFrom || visitDateTo) {
-      const from = visitDateFrom ? new Date(visitDateFrom).getTime() : 0;
-      const to = visitDateTo ? new Date(visitDateTo + 'T23:59:59').getTime() : Infinity;
-      list = list.filter(c =>
-        c.visits?.some(v => {
-          const d = new Date(v.visitDate).getTime();
-          return d >= from && d <= to;
-        })
-      );
-    }
-
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(c =>
-        `${c.name} ${c.surname}`.toLowerCase().includes(q) || c.phone.includes(q)
-      );
-    }
-
-    list.sort((a, b) => {
-      const nameCmp = `${a.surname} ${a.name}`.localeCompare(`${b.surname} ${b.name}`);
-      const visitDiff = (a.visits?.length ?? 0) - (b.visits?.length ?? 0);
-      const lastA = a.visits?.length ? Math.max(...a.visits.map(v => new Date(v.visitDate).getTime())) : 0;
-      const lastB = b.visits?.length ? Math.max(...b.visits.map(v => new Date(v.visitDate).getTime())) : 0;
-      if (sortBy === 'name-asc') return nameCmp;
-      if (sortBy === 'name-desc') return -nameCmp;
-      if (sortBy === 'visits-desc') return -visitDiff;
-      if (sortBy === 'visits-asc') return visitDiff;
-      if (sortBy === 'date-desc') return lastB - lastA;
-      if (sortBy === 'date-asc') return lastA - lastB;
-      return nameCmp;
-    });
-
-    return list;
-  }, [customers, consentFilter, visitFilter, visitDateFrom, visitDateTo, search, sortBy]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- filterParams i setPage zależą tylko od filterKey
+  }, [page, filterKey]);
 
   const activeFilterCount = (consentFilter.size < 2 ? consentFilter.size : 0) + visitFilter.size + (visitDateFrom ? 1 : 0) + (visitDateTo ? 1 : 0);
 
@@ -144,44 +191,75 @@ export default function MessagesPage() {
   function toggleOne(id: string) {
     setSelected(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }
 
-  const selectableInView = filtered.filter(c => c.smsConsent);
-  const allInViewSelected = selectableInView.length > 0 && selectableInView.every(c => selected.has(c.id));
+  // Wybrać można tylko klientów ze zgodą na SMS.
+  const selectableOnPage = customers.filter(c => c.smsConsent);
+  const pageFullySelected = selectableOnPage.length > 0 && selectableOnPage.every(c => selected.has(c.id));
 
-  function toggleAll() {
-    const ids = selectableInView.map(c => c.id);
-    const allSelected = ids.every(id => selected.has(id));
+  function togglePage() {
+    const ids = selectableOnPage.map(c => c.id);
     setSelected(prev => {
       const next = new Set(prev);
-      allSelected ? ids.forEach(id => next.delete(id)) : ids.forEach(id => next.add(id));
+      for (const id of ids) {
+        if (pageFullySelected) next.delete(id);
+        else next.add(id);
+      }
       return next;
     });
+  }
+
+  async function selectAllMatching() {
+    setSelectingAll(true);
+    setSelectNotice('');
+    try {
+      // Tylko klienci ze zgodą; serwer zwraca same id, najwyżej tyle, ile wolno wysłać naraz.
+      const params = filterParams();
+      params.set('smsConsent', 'true');
+      const res = await fetch(`/api/customers/ids?${params}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error');
+      setSelected(prev => new Set([...prev, ...(data.ids as string[])]));
+      if (data.total > data.ids.length) {
+        setSelectNotice(`${t('selectionLimitReached')} ${data.limit} ${t('selectionLimitOf')} ${data.total}.`);
+      }
+    } catch (err) {
+      setSelectNotice(err instanceof Error ? err.message : 'Error');
+    } finally {
+      setSelectingAll(false);
+    }
+  }
+
+  function clearSelection() {
+    setSelected(new Set());
+    setSelectNotice('');
   }
 
   const charCount = message.length;
   const smsCount = Math.ceil(charCount / SMS_LIMIT) || 1;
 
   async function handleSend() {
-    if (!message.trim() || selected.size === 0) return;
+    if (!message.trim() || selected.size === 0 || selected.size > MAX_BULK_RECIPIENTS) return;
     if (!confirm(`${t('confirmBulkSend')} ${selected.size} ${t('confirmBulkSendSuffix')}`)) return;
 
     setSending(true);
     setError('');
-    setResult(null);
 
     try {
-      const res = await fetch('/api/sms/bulk', {
+      idempotencyKey.current ??= newIdempotencyKey();
+      const res = await fetch('/api/sms/campaigns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, customerIds: Array.from(selected) }),
+        body: JSON.stringify({ message, customerIds: Array.from(selected), idempotencyKey: idempotencyKey.current }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error');
-      setResult({ sent: data.sent, failed: data.failed });
+      idempotencyKey.current = null;
+      setProgressId(data.campaign.id);
       setMessage('');
       setSelected(new Set());
     } catch (err) {
@@ -192,12 +270,7 @@ export default function MessagesPage() {
   }
 
   return (
-    <div className="text-gray-900">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">{t('messagesTitle')}</h1>
-        <p className="text-gray-500 text-sm mt-1">{t('messagesSubtitle')}</p>
-      </div>
-
+    <div>
       <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr_1fr] gap-5">
 
         {/* FILTRY — lewa kolumna */}
@@ -222,31 +295,24 @@ export default function MessagesPage() {
                 />
                 <span className="text-sm text-gray-700">{opt.label}</span>
                 <span className="ml-auto text-xs text-gray-400">
-                  {customers.filter(c => String(c.smsConsent) === opt.value).length}
+                  {opt.value === 'true' ? counts.consented : counts.notConsented}
                 </span>
               </label>
             ))}
           </FilterSection>
 
           <FilterSection title="Liczba wizyt">
-            {VISIT_RANGES.map((range, idx) => {
-              const count = customers.filter(c => {
-                const n = c.visits?.length ?? 0;
-                return n >= range.min && n <= range.max;
-              }).length;
-              return (
-                <label key={idx} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={visitFilter.has(String(idx))}
-                    onChange={() => setVisitFilter(prev => toggleSet(prev, String(idx)))}
-                    className="rounded text-blue-600"
-                  />
-                  <span className="text-sm text-gray-700">{range.label}</span>
-                  <span className="ml-auto text-xs text-gray-400">{count}</span>
-                </label>
-              );
-            })}
+            {VISIT_RANGES.map((label, idx) => (
+              <label key={idx} className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={visitFilter.has(String(idx))}
+                  onChange={() => setVisitFilter(prev => toggleSet(prev, String(idx)))}
+                  className="rounded text-blue-600"
+                />
+                <span className="text-sm text-gray-700">{label}</span>
+              </label>
+            ))}
           </FilterSection>
 
           <FilterSection title="Data wizyty" defaultOpen={false}>
@@ -286,7 +352,7 @@ export default function MessagesPage() {
                   type="radio"
                   name="sortBy"
                   checked={sortBy === opt.value}
-                  onChange={() => setSortBy(opt.value as typeof sortBy)}
+                  onChange={() => setSortBy(opt.value as SortBy)}
                   className="text-blue-600"
                 />
                 <span className="text-sm text-gray-700">{opt.label}</span>
@@ -307,28 +373,44 @@ export default function MessagesPage() {
             />
           </div>
 
-          <div className="px-4 py-2 border-b border-gray-100 flex items-center gap-3 bg-gray-50">
-            <input
-              type="checkbox"
-              checked={allInViewSelected}
-              onChange={toggleAll}
-              className="rounded"
-              disabled={selectableInView.length === 0}
-            />
-            <span className="text-xs text-gray-500">
-              {selected.size > 0
-                ? `${selected.size} zaznaczonych`
-                : `${filtered.length} klientów`}
-            </span>
+          <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 space-y-2">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span className="text-sm font-medium text-gray-900">{t('selectedCount')}: {selected.size}</span>
+              <button
+                type="button"
+                onClick={togglePage}
+                disabled={selectableOnPage.length === 0}
+                className="px-2 py-1 text-xs border border-gray-300 bg-white text-gray-700 rounded hover:bg-gray-100 disabled:opacity-50"
+              >
+                {pageFullySelected ? t('deselectPage') : t('selectPage')}
+              </button>
+              <button
+                type="button"
+                onClick={selectAllMatching}
+                disabled={selectingAll || selectableTotal === 0}
+                className="px-2 py-1 text-xs border border-blue-300 bg-white text-blue-700 rounded hover:bg-blue-50 disabled:opacity-50"
+              >
+                {t('selectAllMatching')} ({selectableTotal})
+              </button>
+              {selected.size > 0 && (
+                <button type="button" onClick={clearSelection} className="text-xs text-blue-600 hover:text-blue-800">
+                  {t('clearSelection')}
+                </button>
+              )}
+            </div>
+            {selectNotice && <p className="text-xs text-orange-600">{selectNotice}</p>}
+            {selected.size > MAX_BULK_RECIPIENTS && (
+              <p className="text-xs text-red-600">{t('selectionOverLimit')} {MAX_BULK_RECIPIENTS}.</p>
+            )}
           </div>
 
           <div className="overflow-y-auto max-h-[520px] divide-y divide-gray-50">
             {loading ? (
               <div className="p-8 text-center text-sm text-gray-400">{t('loadingCustomers')}</div>
-            ) : filtered.length === 0 ? (
+            ) : customers.length === 0 ? (
               <div className="p-8 text-center text-sm text-gray-400">{t('noCustomersFound')}</div>
             ) : (
-              filtered.map(customer => (
+              customers.map(customer => (
                 <label
                   key={customer.id}
                   className={`flex items-center gap-3 px-4 py-3 transition-colors ${
@@ -349,12 +431,18 @@ export default function MessagesPage() {
                     <p className="text-xs text-gray-400">{customer.phone}</p>
                   </div>
                   <span className="text-xs text-gray-400 flex-shrink-0">
-                    {customer.visits?.length ?? 0} wiz.
+                    {customer.visitCount} wiz.
                   </span>
                 </label>
               ))
             )}
           </div>
+
+          {total > 0 && (
+            <div className="px-4 pb-3">
+              <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
+            </div>
+          )}
         </div>
 
         {/* WIADOMOŚĆ */}
@@ -367,16 +455,8 @@ export default function MessagesPage() {
             </div>
           )}
 
-          {result && (
-            <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-              <p className="font-medium text-green-800">{t('bulkSmsSuccess')}</p>
-              <div className="flex gap-4 mt-1 text-sm">
-                <span className="text-green-700">✓ {t('bulkSmsSent')}: {result.sent}</span>
-                {result.failed > 0 && (
-                  <span className="text-red-600">✗ {t('bulkSmsFailed')}: {result.failed}</span>
-                )}
-              </div>
-            </div>
+          {progressId && (
+            <CampaignProgress campaignId={progressId} onOpen={onOpenCampaign} />
           )}
 
           <div className="bg-white rounded-lg shadow-sm p-5">
@@ -424,7 +504,7 @@ export default function MessagesPage() {
 
           <button
             onClick={handleSend}
-            disabled={sending || !message.trim() || selected.size === 0}
+            disabled={sending || !message.trim() || selected.size === 0 || selected.size > MAX_BULK_RECIPIENTS}
             className="w-full py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {sending

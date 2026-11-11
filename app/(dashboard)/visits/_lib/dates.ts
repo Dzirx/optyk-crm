@@ -7,16 +7,3 @@ export const isoToLocalInput = (iso: string | null): string => {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
-
-export const toLocalDateStr = (d: Date): string => {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-};
-
-/** Zakres [from, to) w ISO dla miesiąca z daty `YYYY-MM-DD`: od 1. dnia miesiąca do 1. dnia następnego, czas lokalny. */
-export const monthRangeIso = (dateStr: string): { from: string; to: string } => {
-  const [y, m] = dateStr.split('-').map(Number);
-  return { from: new Date(y, m - 1, 1).toISOString(), to: new Date(y, m, 1).toISOString() };
-};

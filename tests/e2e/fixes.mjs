@@ -62,6 +62,36 @@ await run(async () => {
   check(r.status === 400, `oś 12.5 → 400 (${r.status})`);
   r = await c.req('POST', '/api/work-orders', { customerId: cust.id, receivedAt: '2026-11-08', items: [{ type: 'do_dali', lensPrice: '199,50' }] });
   check(r.status === 201 && Number(r.json.workOrder.totalAmount) === 199.5, `cena z przecinkiem 199,50 → 199.5 (${r.json?.workOrder?.totalAmount})`);
+  section('szkła per oko i oprawka (tabela „Szkła i oprawka”)');
+  const hoya = (await c.req('POST', '/api/inventory', { name: 'Hoya 1.6 AR', quantity: 3, price: '150' })).json.item;
+  r = await c.req('POST', '/api/work-orders', { customerId: cust.id, receivedAt: '2026-11-08', items: [{
+    type: 'do_dali', opLensName: 'Hoya 1.6 AR', opLensPrice: '150', inventoryItemIdOp: hoya.id,
+    olLensName: 'Essilor 1.67 Crizal', olLensPrice: '180,50', olOrdered: true, ownFrame: true,
+  }] });
+  const perEye = r.json.workOrder?.items?.[0];
+  check(r.status === 201 && perEye.opLensName === 'Hoya 1.6 AR' && perEye.olLensName === 'Essilor 1.67 Crizal'
+    && Number(perEye.opLensPrice) === 150 && Number(perEye.olLensPrice) === 180.5, `pola per oko zapisane (${r.status})`, r.json);
+  check(Number(perEye?.lensPrice) === 330.5 && Number(r.json.workOrder.totalAmount) === 330.5, `lensPrice = OP + OL (${perEye?.lensPrice}), kwota zlecenia ${r.json.workOrder?.totalAmount}`);
+  check(perEye?.ownFrame === true && perEye.olOrdered === true && perEye.opOrdered === false && perEye.inventoryItemIdOl === null, 'oprawka własna, OL do zamówienia bez towaru');
+  check((await qty(hoya.id)) === 2, 'stan zdjęty tylko dla OP (3 → 2)');
+  r = await c.req('PATCH', `/api/work-orders/${r.json.workOrder.id}`, { items: [{ ...perEye, olLensPrice: '', olLensName: '' }] });
+  check(r.status === 200 && Number(r.json.workOrder.items[0].lensPrice) === 150 && r.json.workOrder.items[0].olLensPrice === null, `usunięcie szkła OL → lensPrice 150 (${r.json.workOrder?.items?.[0]?.lensPrice})`);
+  r = await c.req('PATCH', `/api/work-orders/${r.json.workOrder.id}`, { items: [{ ...r.json.workOrder.items[0], opLensPrice: '', opLensName: '', inventoryItemIdOp: '', lensPrice: '' }] });
+  check(r.status === 200 && r.json.workOrder.items[0].lensPrice === null && (await qty(hoya.id)) === 3, 'brak obu szkieł → lensPrice null, towar wrócił na stan');
+  r = await c.req('POST', '/api/work-orders', { customerId: cust.id, receivedAt: '2026-11-08', items: [{ type: 'do_dali', olLensName: 'Zamówione ręcznie', olLensPrice: '99', olOrdered: true }] });
+  check(r.status === 201 && r.json.workOrder.items[0].olOrdered === true && r.json.workOrder.items[0].inventoryItemIdOl === null && (await qty(hoya.id)) === 3, 'do zamówienia z nazwą ręczną: bez powiązania, stan bez zmian');
+  const oldOrdered = (await c.req('POST', '/api/work-orders', { customerId: cust.id, receivedAt: '2026-11-08', items: [{ type: 'do_dali', opLensName: 'Hoya', inventoryItemIdOp: hoya.id, opOrdered: true }] })).json.workOrder;
+  check((await qty(hoya.id)) === 2, 'stary kształt: do zamówienia + powiązanie nadal zdejmuje towar');
+  r = await c.req('PATCH', `/api/work-orders/${oldOrdered.id}`, { items: [oldOrdered.items[0]] });
+  check(r.status === 200 && r.json.workOrder.items[0].inventoryItemIdOp === hoya.id && (await qty(hoya.id)) === 2, 'zapis bez zmian zachowuje powiązanie i stan');
+  r = await c.req('PATCH', `/api/work-orders/${oldOrdered.id}`, { items: [{ ...oldOrdered.items[0], inventoryItemIdOp: '', opLensName: 'Inna' }] });
+  check(r.status === 200 && r.json.workOrder.items[0].inventoryItemIdOp === null && (await qty(hoya.id)) === 3, 'odpięcie powiązania zwraca towar na stan');
+  r = await c.req('POST', '/api/work-orders', { customerId: cust.id, receivedAt: '2026-11-08', items: [{ type: 'do_dali', opLensPrice: 'abc' }] });
+  check(r.status === 400 && /Cena szkła OP/.test(r.json.error), `zła cena OP → 400 (${r.json?.error})`);
+  r = await c.req('POST', '/api/work-orders', { customerId: cust.id, receivedAt: '2026-11-08', items: [{ type: 'do_dali', lensType: 'organiczne AR', lensPrice: '420' }] });
+  check(r.status === 201 && r.json.workOrder.items[0].lensType === 'organiczne AR' && Number(r.json.workOrder.items[0].lensPrice) === 420
+    && Number(r.json.workOrder.totalAmount) === 420, 'stary kształt (lensType + lensPrice) nadal przyjmowany');
+
   r = await c.req('POST', '/api/work-orders', { customerId: cust.id, receivedAt: '2026-11-08', totalAmount: '100', deposit: '150', items: [] });
   check(r.status === 400, `zaliczka > kwota → 400 (${r.status}: ${r.json?.error})`);
   r = await c.req('PATCH', `/api/work-orders/${o1.id}`, { totalAmount: '100', deposit: '100' });
@@ -102,7 +132,7 @@ await run(async () => {
   sql(`UPDATE visits SET reminder_sms_status='failed' WHERE id='${v2.id}'`);
   r = await c.req('PATCH', `/api/visits/${v2.id}`, { reminderSmsDate: '2027-02-14T12:00:00.000Z' });
   check(r.status === 200 && r.json.visit.reminderSmsStatus === 'pending', `nowa data po błędzie → status pending (${r.json?.visit?.reminderSmsStatus})`);
-  r = await c.req('PATCH', `/api/visits/${v2.id}`, { visitDate: '2027-02-14T08:00:00.000Z' });
+  r = await c.req('PATCH', `/api/visits/${v2.id}`, { visitDate: '2027-02-13T08:00:00.000Z' });
   check(r.status === 400, `wizyta przed przypomnieniem → 400 (${r.status})`);
 
   section('3. „wizyty dziś” w strefie Europe/Warsaw (serwer w UTC)');

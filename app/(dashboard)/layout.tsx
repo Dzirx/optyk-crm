@@ -5,6 +5,7 @@ import { daysLeft, hasAccess } from '@/lib/access';
 import { IS_DESKTOP } from '@/lib/edition';
 import { LanguageProvider } from '@/lib/i18n/language-context';
 import { DashboardSidebar } from '@/components/dashboard/dashboard-sidebar';
+import { NotificationBell } from '@/components/dashboard/notification-bell';
 import { AccessExpired, TrialBanner } from '@/components/dashboard/access-notice';
 
 export default async function DashboardLayout({
@@ -48,8 +49,11 @@ export default async function DashboardLayout({
         />
 
         {/* Main Content */}
-        <div className="flex-1 ml-64">
-          <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+        <div className="flex-1 ml-64 min-w-0">
+          <div className="flex justify-end items-center px-4 sm:px-6 lg:px-8 pt-3">
+            <NotificationBell />
+          </div>
+          <main className="max-w-7xl mx-auto pt-2 pb-6 px-4 sm:px-6 lg:px-8">
             {trialDays !== null && <TrialBanner days={trialDays} />}
             {children}
           </main>

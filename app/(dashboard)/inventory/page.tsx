@@ -1,7 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/language-context';
+import { Pagination } from '@/components/pagination';
+import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
+import { formatPln } from '@/lib/money';
+import { DeliveryModal } from './_components/delivery-modal';
+import { HistoryModal } from './_components/history-modal';
+import { CorrectionModal } from './_components/correction-modal';
 
 function genOpts(from: number, to: number, step: number, decimals: number) {
   const opts: { value: string; label: string }[] = [];
@@ -16,7 +23,6 @@ function genOpts(from: number, to: number, step: number, decimals: number) {
 const SPH_OPTIONS = genOpts(-20, 20, 0.25, 2);
 const CYL_OPTIONS = genOpts(-8, 8, 0.25, 2);
 const DIAMETER_OPTIONS = ['50.0', '55.0', '60.0', '65.0', '70.0', '75.0', '80.0'];
-const PREDEFINED_CATEGORIES = ['Szkła okularowe', 'Soczewki kontaktowe', 'Oprawki', 'Inne'];
 
 interface InventoryItem {
   id: string;
@@ -28,11 +34,14 @@ interface InventoryItem {
   cyl: string | null;
   diameter: string | null;
   price: string | null;
+  purchasePrice: string | null;
   notes: string | null;
 }
 
+const PAGE_SIZE = 50;
+
 function emptyForm() {
-  return { name: '', quantity: '0', unit: 'szt.', category: '', sph: '', cyl: '', diameter: '', price: '', notes: '' };
+  return { name: '', quantity: '0', unit: 'szt.', category: '', sph: '', cyl: '', diameter: '', price: '', purchasePrice: '', notes: '' };
 }
 
 export default function InventoryPage() {
@@ -42,31 +51,77 @@ export default function InventoryPage() {
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
-  const [editingQtyId, setEditingQtyId] = useState<string | null>(null);
-  const [editingQtyValue, setEditingQtyValue] = useState('');
+  const [deliveryItem, setDeliveryItem] = useState<InventoryItem | null>(null);
+  const [historyItem, setHistoryItem] = useState<InventoryItem | null>(null);
+  const [correctionItem, setCorrectionItem] = useState<InventoryItem | null>(null);
+  const [reason, setReason] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [search, setSearch] = useState('');
+  const [total, setTotal] = useState(0);
+  const [categories, setCategories] = useState<string[]>([]);
+  // Zmiana frazy albo kategorii wraca na stronę 1 (strona jest powiązana z kluczem wyszukiwania).
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
+  const searchKey = `${debouncedSearch}|${categoryFilter}`;
+  const [pageState, setPageState] = useState({ key: searchKey, page: 1 });
+  const page = pageState.key === searchKey ? pageState.page : 1;
+  const setPage = (p: number) => setPageState({ key: searchKey, page: p });
+  const [reloadKey, setReloadKey] = useState(0);
+  const requestSeq = useRef(0);
   const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [openCountId, setOpenCountId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm());
 
-  useEffect(() => { fetchItems(); }, []);
+  useEffect(() => {
+    const seq = ++requestSeq.current;
+    (async () => {
+      try {
+        const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+        if (debouncedSearch) params.set('q', debouncedSearch);
+        if (categoryFilter) params.set('category', categoryFilter);
+        const res = await fetch(`/api/inventory?${params}`);
+        const data = await res.json();
+        if (seq !== requestSeq.current) return; // nowsze żądanie wyprzedziło to
+        if (!res.ok) throw new Error(data.error || 'Błąd ładowania magazynu');
+        // Strona zniknęła (np. po usunięciu ostatniej pozycji na niej): wracamy o jedną.
+        const lastPage = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
+        }
+        setItems(data.items || []);
+        setTotal(data.total);
+        setCategories(data.categories || []);
+        setError('');
+        setLoading(false);
+      } catch (err) {
+        if (seq !== requestSeq.current) return;
+        setError(err instanceof Error ? err.message : 'Błąd ładowania magazynu');
+        setLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPage zależy tylko od searchKey
+  }, [page, debouncedSearch, categoryFilter, reloadKey]);
 
-  async function fetchItems() {
-    setLoading(true);
+  const fetchItems = () => setReloadKey(k => k + 1);
+
+  async function fetchOpenCount() {
     try {
-      const res = await fetch('/api/inventory');
+      const res = await fetch('/api/stock-counts');
       const data = await res.json();
-      setItems(data.items || []);
+      const open = (data.stockCounts ?? []).find((c: { status: string }) => c.status === 'open');
+      setOpenCountId(open ? open.id : null);
     } catch {
-      setError('Błąd ładowania magazynu');
-    } finally {
-      setLoading(false);
+      setOpenCountId(null);
     }
   }
+  useEffect(() => { fetchOpenCount(); }, []);
 
   function openAdd() {
     setEditingItem(null);
     setForm(emptyForm());
+    setFormError('');
+    setReason('');
     setShowModal(true);
   }
 
@@ -80,28 +135,37 @@ export default function InventoryPage() {
       sph: item.sph != null ? String(item.sph) : '',
       cyl: item.cyl != null ? String(item.cyl) : '',
       diameter: item.diameter != null ? String(item.diameter) : '',
-      price: item.price != null ? String(item.price) : '',
+      price: item.price != null ? Number(item.price).toFixed(2).replace('.', ',') : '',
+      purchasePrice: item.purchasePrice != null ? Number(item.purchasePrice).toFixed(2).replace('.', ',') : '',
       notes: item.notes || '',
     });
+    setFormError('');
+    setReason('');
     setShowModal(true);
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (qtyChanged && !reason.trim()) { setFormError(t('qtyCorrectionReasonRequired')); return; }
     setSubmitting(true);
+    setFormError('');
     try {
       const method = editingItem ? 'PATCH' : 'POST';
       const url = editingItem ? `/api/inventory/${editingItem.id}` : '/api/inventory';
-      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      // Przy edycji ilość idzie do serwera tylko wtedy, gdy użytkownik ją zmienił (inaczej mogłaby nadpisać świeży stan).
+      const { quantity: _unchanged, ...rest } = form;
+      void _unchanged;
+      const payload = !editingItem ? form : qtyChanged ? { ...form, note: reason.trim() } : rest;
+      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) {
         const d = await res.json();
-        setError(d.error || 'Błąd zapisu');
+        setFormError(d.error || 'Błąd zapisu');
         return;
       }
       setShowModal(false);
       fetchItems();
     } catch {
-      setError('Błąd zapisu');
+      setFormError('Błąd zapisu');
     } finally {
       setSubmitting(false);
     }
@@ -110,39 +174,15 @@ export default function InventoryPage() {
   async function handleDelete(id: string) {
     if (!confirm(t('areYouSureInventory'))) return;
     try {
-      await fetch(`/api/inventory/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/inventory/${id}`, { method: 'DELETE' });
+      if (!res.ok) setError((await res.json().catch(() => ({}))).error || 'Błąd usuwania');
       fetchItems();
     } catch {
       setError('Błąd usuwania');
     }
   }
 
-  async function saveInlineQty(id: string) {
-    const qty = parseInt(editingQtyValue);
-    if (isNaN(qty)) { setEditingQtyId(null); return; }
-    try {
-      await fetch(`/api/inventory/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quantity: qty }),
-      });
-      setEditingQtyId(null);
-      fetchItems();
-    } catch {
-      setError('Błąd zapisu');
-    }
-  }
-
-  const categories = Array.from(new Set(items.map(i => i.category).filter(Boolean))) as string[];
-  const filtered = items.filter(i => {
-    if (categoryFilter && i.category !== categoryFilter) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return i.name.toLowerCase().includes(q) || (i.category ?? '').toLowerCase().includes(q) || (i.notes ?? '').toLowerCase().includes(q);
-    }
-    return true;
-  });
-
+  const qtyChanged = !!editingItem && form.quantity.trim() !== String(editingItem.quantity);
   function formatPrescription(item: InventoryItem) {
     const parts: string[] = [];
     if (item.sph != null) parts.push(`SPH: ${Number(item.sph) > 0 ? '+' : ''}${Number(item.sph).toFixed(2)}`);
@@ -153,18 +193,33 @@ export default function InventoryPage() {
 
   return (
     <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{t('inventoryTitle')}</h1>
           <p className="text-gray-500 text-sm mt-1">{t('inventorySubtitle')}</p>
         </div>
-        <button
-          onClick={openAdd}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
-        >
-          + {t('addInventoryItem')}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/inventory/stock-counts"
+            className="bg-white text-gray-700 border border-gray-300 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50"
+          >
+            {t('stockCounts')}
+          </Link>
+          <button
+            onClick={openAdd}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
+          >
+            + {t('addInventoryItem')}
+          </button>
+        </div>
       </div>
+
+      {openCountId && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm">
+          {t('inventoryCountInProgress')}{' '}
+          <Link href={`/inventory/stock-counts/${openCountId}`} className="underline font-medium">{t('continueStockCount')}</Link>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
@@ -196,10 +251,10 @@ export default function InventoryPage() {
 
       {loading ? (
         <p className="text-gray-500">{t('loadingInventory')}</p>
-      ) : filtered.length === 0 ? (
+      ) : items.length === 0 ? (
         <p className="text-gray-500">{t('noInventoryItems')}</p>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
@@ -208,51 +263,44 @@ export default function InventoryPage() {
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Moce</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">{t('quantity')}</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t('unit')}</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Cena brutto</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">{t('purchasePrice')}</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">{t('salePrice')}</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t('notes')}</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">{t('actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filtered.map(item => (
+              {items.map(item => (
                 <tr key={item.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium text-gray-900">{item.name}</td>
                   <td className="px-4 py-3 text-gray-600">{item.category || '—'}</td>
                   <td className="px-4 py-3 text-center text-gray-600 text-xs">{formatPrescription(item)}</td>
                   <td className="px-4 py-3 text-center">
-                    {editingQtyId === item.id ? (
-                      <div className="flex items-center justify-center gap-1">
-                        <input
-                          type="number"
-                          value={editingQtyValue}
-                          onChange={e => setEditingQtyValue(e.target.value)}
-                          onBlur={() => saveInlineQty(item.id)}
-                          onKeyDown={e => { if (e.key === 'Enter') saveInlineQty(item.id); if (e.key === 'Escape') setEditingQtyId(null); }}
-                          className="w-16 border border-blue-400 rounded px-1 py-0.5 text-center text-sm"
-                          autoFocus
-                        />
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => { setEditingQtyId(item.id); setEditingQtyValue(String(item.quantity)); }}
-                        className={`font-semibold px-2 py-0.5 rounded cursor-pointer hover:bg-gray-100 ${item.quantity <= 0 ? 'text-red-600' : item.quantity <= 2 ? 'text-yellow-600' : 'text-green-700'}`}
-                      >
-                        {item.quantity}
-                        {item.quantity < 0 && (
-                          <span className="ml-1 text-xs font-normal" title="Sztuki zamówione do zleceń, czekają na dostawę">
-                            (zamówione: {-item.quantity})
-                          </span>
-                        )}
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setCorrectionItem(item)}
+                      title={t('qtyClickToCorrect')}
+                      className={`font-semibold px-2 py-0.5 rounded cursor-pointer hover:bg-gray-100 ${item.quantity <= 0 ? 'text-red-600' : item.quantity <= 2 ? 'text-yellow-600' : 'text-green-700'}`}
+                    >
+                      {item.quantity}
+                      {item.quantity < 0 && (
+                        <span className="ml-1 text-xs font-normal" title="Sztuki zamówione do zleceń, czekają na dostawę">
+                          (zamówione: {-item.quantity})
+                        </span>
+                      )}
+                    </button>
                   </td>
                   <td className="px-4 py-3 text-gray-600">{item.unit}</td>
+                  <td className="px-4 py-3 text-right text-gray-700 text-sm">
+                    {item.purchasePrice != null ? formatPln(Number(item.purchasePrice)) : '—'}
+                  </td>
                   <td className="px-4 py-3 text-right text-gray-700 font-medium text-sm">
-                    {item.price != null ? `${Number(item.price).toFixed(2)} zł` : '—'}
+                    {item.price != null ? formatPln(Number(item.price)) : '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{item.notes || '—'}</td>
                   <td className="px-4 py-3 text-center">
-                    <div className="flex items-center justify-center gap-2">
+                    <div className="flex items-center justify-center gap-3 whitespace-nowrap">
+                      <button onClick={() => setDeliveryItem(item)} className="text-green-700 hover:text-green-900 text-xs font-medium">{t('deliveryAction')}</button>
+                      <button onClick={() => setHistoryItem(item)} className="text-gray-600 hover:text-gray-900 text-xs font-medium">{t('historyAction')}</button>
                       <button onClick={() => openEdit(item)} className="text-blue-600 hover:text-blue-800 text-xs font-medium">{t('edit')}</button>
                       <button onClick={() => handleDelete(item.id)} className="text-red-500 hover:text-red-700 text-xs font-medium">{t('delete')}</button>
                     </div>
@@ -263,14 +311,21 @@ export default function InventoryPage() {
           </table>
         </div>
       )}
+      {!loading && total > 0 && <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />}
+
+      {deliveryItem && <DeliveryModal item={deliveryItem} onClose={() => setDeliveryItem(null)} onDone={() => { setDeliveryItem(null); fetchItems(); }} />}
+      {historyItem && <HistoryModal item={historyItem} onClose={() => setHistoryItem(null)} />}
+      {correctionItem && <CorrectionModal item={correctionItem} onClose={() => setCorrectionItem(null)} onDone={() => { setCorrectionItem(null); fetchItems(); }} />}
 
       {/* Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 p-6">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40">
+          <div className="flex min-h-full items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-4 sm:p-6 min-w-0">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">
               {editingItem ? t('editInventoryItem') : t('addInventoryItem')}
             </h2>
+            {formError && <div role="alert" className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">{formError}</div>}
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('itemName')} *</label>
@@ -290,11 +345,12 @@ export default function InventoryPage() {
                   <input
                     type="number"
                     required
-                    min="0"
+                    min={editingItem ? undefined : '0'}
                     value={form.quantity}
                     onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                   />
+                  {editingItem && <p className="mt-1 text-xs text-gray-500">{t('qtyCorrectionHelp')}</p>}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('unit')}</label>
@@ -308,27 +364,35 @@ export default function InventoryPage() {
                 </div>
               </div>
 
+              {qtyChanged && (
+                <div>
+                  <label htmlFor="edit-reason" className="block text-sm font-medium text-gray-700 mb-1">{t('qtyCorrectionReason')} *</label>
+                  <input
+                    id="edit-reason"
+                    type="text"
+                    maxLength={500}
+                    value={reason}
+                    onChange={e => setReason(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm placeholder:text-gray-400"
+                    placeholder={t('qtyCorrectionReasonPlaceholder')}
+                  />
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('category')}</label>
-                <div className="flex flex-wrap gap-1 mb-2">
-                  {Array.from(new Set([...PREDEFINED_CATEGORIES, ...categories])).map(c => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => setForm(f => ({ ...f, category: f.category === c ? '' : c }))}
-                      className={`px-2 py-0.5 rounded-full text-xs border transition-colors ${form.category === c ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'}`}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
                 <input
                   type="text"
+                  list="inventory-categories"
+                  maxLength={100}
                   value={form.category}
                   onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                  placeholder="lub wpisz własną kategorię..."
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm placeholder:text-gray-400"
+                  placeholder={t('categoryPlaceholder')}
                 />
+                <datalist id="inventory-categories">
+                  {categories.map(c => <option key={c} value={c} />)}
+                </datalist>
               </div>
 
               <div className="grid grid-cols-3 gap-3">
@@ -367,17 +431,29 @@ export default function InventoryPage() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Cena brutto (zł)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={form.price}
-                  onChange={e => setForm(f => ({ ...f, price: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                  placeholder="0.00"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('purchasePrice')} (zł)</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={form.purchasePrice}
+                    onChange={e => setForm(f => ({ ...f, purchasePrice: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm placeholder:text-gray-400"
+                    placeholder="0,00"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('salePrice')} (zł)</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={form.price}
+                    onChange={e => setForm(f => ({ ...f, price: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm placeholder:text-gray-400"
+                    placeholder="0,00"
+                  />
+                </div>
               </div>
 
               <div>
@@ -400,6 +476,7 @@ export default function InventoryPage() {
                 </button>
               </div>
             </form>
+          </div>
           </div>
         </div>
       )}

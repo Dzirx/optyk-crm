@@ -2,6 +2,7 @@ import type { Business, Customer, WorkOrder, WorkOrderItem } from '@prisma/clien
 import styles from './print.module.css';
 import { itemsTotal, hasPrices } from '@/lib/work-orders/totals';
 import { formatPhone } from '@/lib/phone';
+import { formatPln } from '@/lib/money';
 
 type WorkOrderWithRelations = WorkOrder & {
   customer: Customer;
@@ -33,7 +34,7 @@ function orderTotal(workOrder: WorkOrderWithRelations): number | null {
 }
 
 function formatMoney(value: number | null): string {
-  return value != null ? `${value.toFixed(2)} zł` : '';
+  return value != null ? formatPln(value) : '';
 }
 
 function formatRx(value: number | null, decimals = 2): string {
@@ -100,28 +101,37 @@ function RxTable({ item }: { item: WorkOrderItem }) {
 }
 
 function ItemBlock({ item }: { item: WorkOrderItem }) {
+  const contact = item.type === 'soczewki_kontaktowe';
   const framePrice = toNumber(item.framePrice);
-  const lensPrice = toNumber(item.lensPrice);
+  // Stare pozycje mają jedną nazwę i cenę szkieł (lensType, lensPrice) — pokazujemy je przy OP.
+  const hasPerEye = !!(item.opLensName || item.olLensName || item.opLensPrice != null || item.olLensPrice != null);
+  const opName = hasPerEye ? item.opLensName : item.lensType;
+  const opPrice = toNumber(hasPerEye ? item.opLensPrice : item.lensPrice);
+  const olPrice = toNumber(item.olLensPrice);
+  const lensName = contact ? 'Soczewka' : 'Szkło';
 
   return (
     <div className={styles.itemBlock}>
       <p className={styles.itemTitle}>{ITEM_TYPE_LABELS[item.type] ?? item.type}</p>
-      {item.type !== 'soczewki_kontaktowe' && <RxTable item={item} />}
+      {!contact && <RxTable item={item} />}
       <div className={styles.itemDetails}>
-        {item.type === 'soczewki_kontaktowe' ? (
-          <span>Model soczewek: {item.lensType || '—'}</span>
-        ) : (
-          <>
-            <span>
-              Oprawka: {item.frameModel || '—'}
-              {item.ownFrame ? ' (własna)' : ''}
-            </span>
-            <span>Rodzaj szkieł: {item.lensType || '—'}</span>
-          </>
+        {(opName || opPrice != null) && (
+          <span>
+            {lensName} OP: {opName || '—'}
+            {opPrice != null && ` (${formatMoney(opPrice)})`}
+          </span>
         )}
-        {framePrice != null && <span>Cena oprawki: {formatMoney(framePrice)}</span>}
-        {lensPrice != null && (
-          <span>{item.type === 'soczewki_kontaktowe' ? 'Cena soczewek' : 'Cena szkieł'}: {formatMoney(lensPrice)}</span>
+        {(item.olLensName || olPrice != null) && (
+          <span>
+            {lensName} OL: {item.olLensName || '—'}
+            {olPrice != null && ` (${formatMoney(olPrice)})`}
+          </span>
+        )}
+        {!contact && (item.ownFrame || item.frameModel || framePrice != null) && (
+          <span>
+            Oprawka: {item.ownFrame ? 'własna klienta' : item.frameModel || '—'}
+            {framePrice != null && ` (${formatMoney(framePrice)})`}
+          </span>
         )}
       </div>
     </div>

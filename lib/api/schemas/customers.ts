@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isIsoDay } from '@/lib/time';
 import { pageParam, pageSizeParam, searchParam } from './common';
 
 const REQUIRED = 'Imię, nazwisko i telefon są wymagane';
@@ -34,6 +35,7 @@ export const updateCustomerSchema = z.object({
 });
 
 // GET /api/customers: bez `page` zwraca całą listę (stary kształt), z `page` jedną stronę.
+// `visitRanges`, `visitFrom`, `visitTo`, `sort`: patrz lib/customers/list-filter.ts.
 // `smsConsent` zawęża listę (zakładki „ze zgodą” / „bez zgody”); `withVisits=1` dodaje tablicę wizyt.
 export const listCustomersQuerySchema = z.object({
   page: pageParam,
@@ -41,4 +43,18 @@ export const listCustomersQuerySchema = z.object({
   q: searchParam,
   smsConsent: z.enum(['true', 'false'], { error: 'Nieprawidłowa wartość „smsConsent” (true lub false)' }).optional(),
   withVisits: z.string().optional(),
+  // Filtry strony wiadomości: przedziały liczby wizyt („0,2”), wizyta w dniach od–do, sortowanie.
+  visitRanges: z.string().regex(/^[0-3](,[0-3]){0,3}$/, 'Nieprawidłowa wartość „visitRanges” (np. 0,2)').optional(),
+  visitFrom: dayParam('visitFrom'),
+  visitTo: dayParam('visitTo'),
+  sort: z
+    .enum(['name-asc', 'name-desc', 'visits-desc', 'visits-asc', 'date-desc', 'date-asc'], { error: 'Nieprawidłowa wartość „sort”' })
+    .optional(),
 });
+
+function dayParam(name: string) {
+  return z
+    .string()
+    .refine(isIsoDay, `Nieprawidłowa data „${name}” (oczekiwano yyyy-mm-dd)`)
+    .optional();
+}

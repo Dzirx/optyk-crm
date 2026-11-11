@@ -56,7 +56,8 @@ npm run dev             # http://localhost:3000
 | `DATABASE_URL` | tak | Adres połączenia z PostgreSQL. |
 | `AUTH_SECRET` | tak | Sekret NextAuth do podpisywania sesji. Czytany przez NextAuth, nie przez kod aplikacji. |
 | `AUTH_TRUST_HOST` | za proxy | Ustaw `true`, gdy aplikacja działa za reverse proxy. Czytana przez NextAuth. |
-| `CRON_SECRET` | tak, dla SMS | Token endpointu `GET /api/cron/send-scheduled-sms`. Bez niego endpoint zwraca błąd 500. |
+| `CRON_SECRET` | nie | Token ręcznego uruchomienia wysyłki `GET /api/cron/send-scheduled-sms`. Harmonogram wbudowany go nie potrzebuje. |
+| `SMS_SCHEDULER` | nie | `off` wyłącza wbudowany harmonogram SMS, `on` włącza go lokalnie. Domyślnie: włączony w produkcji. |
 | `ROOT_USER_EMAIL` | tak | E-mail konta administratora tworzonego przez seed. |
 | `ROOT_USER_PASSWORD` | tak | Hasło tego konta. |
 | `ROOT_USER_NAME` | tak | Nazwa tego konta. Brak którejkolwiek zmiennej `ROOT_USER_*` kończy seed błędem (a w kontenerze zatrzymuje start). |
@@ -87,15 +88,19 @@ Uwaga: `db push` bez `--accept-data-loss` zatrzyma start, gdy zmiana schematu us
 
 Baza PostgreSQL musi być dostępna pod `DATABASE_URL`. Przykładowy plik `docker-optyk.yaml` pokazuje układ z bazą i aplikacją.
 
-### Zaplanowane SMS (cron)
+### Zaplanowane SMS
 
-SMS z przypomnieniem i prośbą o opinię wysyła endpoint wywoływany z zewnątrz. Wywołuj go co 5 minut:
+SMS z przypomnieniem i prośbą o opinię wysyła wbudowany harmonogram. Serwer w trybie produkcyjnym uruchamia go sam przy starcie (`instrumentation.ts`) i co 5 minut sprawdza zaległe SMS-y. Na serwerze nie trzeba ustawiać crona.
+
+- Wyłączenie: `SMS_SCHEDULER=off` w `.env`. Lokalnie (`npm run dev`, testy) harmonogram jest domyślnie wyłączony; włączenie: `SMS_SCHEDULER=on`.
+- Wersja Windows ma własny licznik w `desktop/src/backend.js`.
+- Ręczne uruchomienie wysyłki (np. test):
 
 ```bash
 curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://TWOJA-DOMENA/api/cron/send-scheduled-sms
 ```
 
-Endpoint odpowiada `401` przy złym tokenie i `500` przy braku `CRON_SECRET`.
+Endpoint odpowiada `401` przy złym tokenie i `500` przy braku `CRON_SECRET`. Każdy SMS jest rezerwowany przed wysłaniem, więc równoległe uruchomienia nie wyślą go dwa razy.
 
 ### Okres próbny i panel administratora
 

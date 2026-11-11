@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { itemsTotal, hasPrices, inventoryPriceSum, itemTotal } from '../../lib/work-orders/totals';
+import { itemsTotal, hasPrices, itemTotal } from '../../lib/work-orders/totals';
 
 test('oprawka + szkła bez błędu zaokrąglenia', () => {
   assert.equal(itemsTotal([{ framePrice: '199.99', lensPrice: '0.01' }]), 200);
@@ -26,24 +26,18 @@ test('śmieci w cenie są ignorowane', () => {
   assert.equal(itemTotal({ framePrice: 'abc', lensPrice: '10' }), 10);
 });
 
-const inv = [
-  { id: 'a', price: '150.00' },
-  { id: 'b', price: '175.50' },
-  { id: 'c', price: null },
-];
-
-test('soczewka OP + OL', () => {
-  assert.equal(inventoryPriceSum(['a', 'b'], inv), 325.5);
+test('ceny szkieł per oko: suma OP + OL', () => {
+  assert.equal(itemsTotal([{ framePrice: '100', opLensPrice: '150.10', olLensPrice: '180.20' }]), 430.3);
 });
 
-test('ta sama soczewka na oba oczy = 2 sztuki', () => {
-  assert.equal(inventoryPriceSum(['a', 'a'], inv), 300);
+test('cena tylko jednego oka', () => {
+  assert.equal(itemTotal({ opLensPrice: '150', olLensPrice: '' }), 150);
 });
 
-test('tylko jedno oko', () => {
-  assert.equal(inventoryPriceSum(['a', ''], inv), 150);
+test('bez cen per oko liczy się stare lensPrice', () => {
+  assert.equal(itemTotal({ lensPrice: '420', opLensPrice: null, olLensPrice: '' }), 420);
 });
 
-test('brak ceny w magazynie', () => {
-  assert.equal(inventoryPriceSum(['c', ''], inv), null);
+test('hasPrices widzi cenę per oko', () => {
+  assert.equal(hasPrices([{ olLensPrice: '10' }]), true);
 });

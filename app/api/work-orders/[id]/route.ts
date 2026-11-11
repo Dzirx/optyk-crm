@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { withBusiness } from '@/lib/api/handler';
-import { customerBelongsTo, inventoryBelongsTo, inventoryIdsFromItems } from '@/lib/api/ownership';
+import { assertInventoryLinkable, customerBelongsTo, inventoryBelongsTo, inventoryIdsFromItems } from '@/lib/api/ownership';
 import { updateWorkOrderSchema } from '@/lib/api/schemas/work-orders';
 import { NOT_FOUND_INVENTORY, assertDepositFits, resolveTotal } from '@/lib/work-orders/amounts';
+import { STOCK_TX_TIMEOUT, lockStock } from '@/lib/stock-count/lock';
 import { addLinks, applyAdjustments, orderedInventoryIds, returnOrdersToStock } from '@/lib/work-orders/inventory';
 import { assertOrderNumberFree, lockOrderNumbering } from '@/lib/work-orders/order-number';
 
@@ -54,7 +55,13 @@ export const PATCH = withBusiness(
       if (foreignItem) {
         return NextResponse.json({ error: 'Nie znaleziono pozycji zlecenia' }, { status: 404 });
       }
-      if (!(await inventoryBelongsTo(business.id, inventoryIdsFromItems(items)))) {
+      // Powiązania, które zlecenie już ma, zostają dozwolone także dla towaru usuniętego z magazynu.
+      const linked = await db.workOrderItem.findMany({
+        where: { workOrderId: id },
+        select: { inventoryItemIdOp: true, inventoryItemIdOl: true, inventoryItemIdFrame: true },
+      });
+      const keepIds = linked.flatMap((l) => [l.inventoryItemIdOp, l.inventoryItemIdOl, l.inventoryItemIdFrame]).filter((x): x is string => !!x);
+      if (!(await inventoryBelongsTo(business.id, inventoryIdsFromItems(items), keepIds))) {
         return NextResponse.json({ error: NOT_FOUND_INVENTORY }, { status: 404 });
       }
     }
@@ -84,6 +91,7 @@ export const PATCH = withBusiness(
     const newNumber = body.orderNumber;
 
     const workOrder = await db.$transaction(async (tx) => {
+      if (items !== undefined) await lockStock(tx, business.id); // przed numeracją i wierszami towarów
       if (newNumber && newNumber !== existing.orderNumber) {
         await lockOrderNumbering(tx, business.id);
         await assertOrderNumberFree(tx, business.id, newNumber, id);
@@ -94,6 +102,9 @@ export const PATCH = withBusiness(
           where: { workOrderId: id },
           select: { id: true, inventoryItemIdOp: true, inventoryItemIdOl: true, inventoryItemIdFrame: true },
         });
+        // Nowo powiązane towary muszą dalej istnieć (powiązania, które zlecenie już ma, mogą wskazywać usunięty towar).
+        const kept = existingItems.flatMap((e) => [e.inventoryItemIdOp, e.inventoryItemIdOl, e.inventoryItemIdFrame]).filter((x): x is string => !!x);
+        await assertInventoryLinkable(tx, business.id, inventoryIdsFromItems(items), kept);
         const incomingIds = new Set(toUpdate.map((i) => i.id));
         const toDelete = existingItems.filter((ei) => !incomingIds.has(ei.id));
 
@@ -119,7 +130,12 @@ export const PATCH = withBusiness(
           await tx.workOrderItem.create({ data: { workOrderId: id, ...row } });
         }
 
-        await applyAdjustments(tx, adjustments, orderedInventoryIds(itemRows ?? []));
+        await applyAdjustments(
+          tx,
+          { businessId: business.id, workOrderId: id, orderNumber: newNumber || existing.orderNumber, userId: business.userId },
+          adjustments,
+          orderedInventoryIds(itemRows ?? []),
+        );
       }
 
       return tx.workOrder.update({
@@ -127,7 +143,7 @@ export const PATCH = withBusiness(
         data: { ...fields, orderNumber: newNumber || existing.orderNumber },
         include: { items: { orderBy: { id: 'asc' } }, customer: true },
       });
-    });
+    }, STOCK_TX_TIMEOUT);
 
     return NextResponse.json({ workOrder });
   },
@@ -143,9 +159,10 @@ export const DELETE = withBusiness(
 
     // Odczyt pozycji i zwrot towaru w tej samej transakcji co usunięcie.
     await db.$transaction(async (tx) => {
-      await returnOrdersToStock(tx, { workOrderId: id });
+      await lockStock(tx, business.id);
+      await returnOrdersToStock(tx, business.id, { workOrderId: id }, business.userId);
       await tx.workOrder.delete({ where: { id } });
-    });
+    }, STOCK_TX_TIMEOUT);
 
     return NextResponse.json({ message: 'Work order deleted successfully' });
   },

@@ -1,3 +1,4 @@
+import type { SmsFailure } from '@/components/sms-failure-note';
 export interface WorkOrderItem {
   id?: string;
   type: string;
@@ -5,16 +6,32 @@ export interface WorkOrderItem {
   olSph: string; olCyl: string; olAxis: string; olAdd: string; olPd: string;
   frameModel: string;
   ownFrame: boolean;
+  /** Pole historyczne (jedna nazwa szkieł); nowe dane są w opLensName/olLensName. */
   lensType: string;
   framePrice: string;
+  /** Suma opLensPrice + olLensPrice (liczy serwer). */
   lensPrice: string;
+  opLensName: string;
+  olLensName: string;
+  opLensPrice: string;
+  olLensPrice: string;
   inventoryItemIdOp: string;
   inventoryItemIdOl: string;
   inventoryItemIdFrame: string;
   opOrdered: boolean;
   olOrdered: boolean;
   frameOrdered: boolean;
+  /** Tylko w formularzu (nie jest zapisywane): skąd pochodzi element. */
+  opSource?: Source;
+  olSource?: Source;
+  frameSource?: Source;
 }
+
+/** Skąd pochodzi szkło lub oprawka. */
+export type Source = 'stock' | 'order' | 'manual' | 'own' | 'none';
+
+/** Element pozycji: szkło OP, szkło OL albo oprawka. */
+export type Element = 'op' | 'ol' | 'frame';
 
 export type OrderedKey = 'opOrdered' | 'olOrdered' | 'frameOrdered';
 
@@ -44,6 +61,7 @@ export interface WorkOrder {
   notes: string | null;
   reviewSmsStatus: string | null;
   reviewSmsSentAt: string | null;
+  reviewSmsFailure?: SmsFailure | null;
   items: WorkOrderItem[];
 }
 

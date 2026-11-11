@@ -2,6 +2,7 @@
 
 import type { Dispatch, FormEvent, SetStateAction } from 'react';
 import { useLanguage } from '@/lib/i18n/language-context';
+import { formatPln } from '@/lib/money';
 import { STATUSES } from '../_lib/constants';
 import { emptyItem } from '../_lib/helpers';
 import type {
@@ -69,7 +70,7 @@ export function OrderFormModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-    <div className="relative w-full max-w-2xl max-h-[90vh] bg-white shadow-2xl flex flex-col rounded-xl border border-gray-200 mx-4">
+    <div className="relative w-full max-w-5xl max-h-[90vh] bg-white shadow-2xl flex flex-col rounded-xl border border-gray-200 mx-4">
       <div className="p-6 border-b flex items-center justify-between flex-shrink-0">
         <h2 className="text-lg font-semibold">
           {editing ? t('editWorkOrder') : t('addWorkOrder')}
@@ -167,7 +168,7 @@ export function OrderFormModal({
                 placeholder="0.00"
               />
               <p className="text-xs text-gray-500 mt-1">
-                {t('itemsSum')}: {itemsSum.toFixed(2)} zł
+                {t('itemsSum')}: {formatPln(itemsSum)}
                 {totalManual && effectiveTotal !== autoTotal && (
                   <button
                     type="button"
@@ -180,7 +181,7 @@ export function OrderFormModal({
               </p>
               {amountToPay != null && (
                 <p className="text-sm font-medium text-gray-800 mt-1">
-                  {t('amountToPay')}: {amountToPay.toFixed(2)} zł
+                  {t('amountToPay')}: {formatPln(amountToPay)}
                 </p>
               )}
             </div>

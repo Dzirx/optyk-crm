@@ -125,7 +125,7 @@ await run(async () => {
   r = await A.c.req('POST', '/api/visits', { customerId: A.cust.id, visitDate: 'nie-data' });
   check(r.status === 400 && r.json.error === 'Nieprawidłowa data wizyty', `zła data wizyty → ${r.json?.error}`);
   r = await A.c.req('POST', '/api/visits', { customerId: A.cust.id, visitDate: '2027-01-15T10:00:00Z', reminderSmsDate: '2027-01-16T10:00:00Z' });
-  check(r.status === 400 && /przed datą wizyty/.test(r.json.error), `przypomnienie po wizycie → ${r.json?.error}`);
+  check(r.status === 400 && /nie może być późniejszy niż dzień wizyty/.test(r.json.error), `przypomnienie po wizycie → ${r.json?.error}`);
   r = await A.c.req('POST', '/api/work-orders', { customerId: A.cust.id, receivedAt: '2026-11-08', items: 'x' });
   check(r.status === 400 && r.json.error === 'Nieprawidłowe pozycje zlecenia', `items nie jest tablicą → ${r.json?.error}`);
   r = await A.c.req('POST', '/api/work-orders', { receivedAt: '2026-11-08' });

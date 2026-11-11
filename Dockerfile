@@ -28,6 +28,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 COPY --from=builder --chown=nextjs:nodejs /app/lib/db/seed.ts ./lib/db/seed.ts
 COPY --from=builder --chown=nextjs:nodejs /app/lib/db/index.ts ./lib/db/index.ts
+# Seed zakłada też historię magazynu (importy z aliasem @/ → tsconfig.json i wymagane moduły).
+COPY --from=builder --chown=nextjs:nodejs /app/tsconfig.json ./tsconfig.json
+COPY --from=builder --chown=nextjs:nodejs /app/lib/stock ./lib/stock
+COPY --from=builder --chown=nextjs:nodejs /app/lib/stock-count/lock.ts ./lib/stock-count/lock.ts
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
 COPY --chown=nextjs:nodejs entrypoint.sh ./entrypoint.sh

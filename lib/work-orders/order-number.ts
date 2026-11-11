@@ -6,6 +6,7 @@
 
 import type { Prisma } from '@prisma/client';
 import { currentYear } from '@/lib/time';
+import { ORDER_NUMBER_LOCK_CLASS } from '@/lib/stock/lock-keys';
 
 export class DuplicateOrderNumberError extends Error {
   constructor(public readonly orderNumber: string) {
@@ -16,7 +17,7 @@ export class DuplicateOrderNumberError extends Error {
 
 /** Blokuje numerację zleceń salonu do końca transakcji. */
 export async function lockOrderNumbering(tx: Prisma.TransactionClient, businessId: string): Promise<void> {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'work-order-number:' + businessId}))`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ORDER_NUMBER_LOCK_CLASS}::int, hashtext(${businessId}))`;
 }
 
 /** Następny wolny numer automatyczny. Wywołuj po lockOrderNumbering. */

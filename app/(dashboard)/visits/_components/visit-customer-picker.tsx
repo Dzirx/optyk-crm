@@ -61,7 +61,7 @@ export function VisitCustomerPicker({
                     key={c.id}
                     type="button"
                     onClick={() => {
-                      setFormData({ ...formData, customerId: c.id });
+                      setFormData({ ...formData, customerId: c.id, smsConsent: c.smsConsent });
                       setCustomerSearch(`${c.name} ${c.surname} - ${c.phone}`);
                       setSelectedCustomerName(`${c.name} ${c.surname}`);
                       setOpen(false);
@@ -84,7 +84,7 @@ export function VisitCustomerPicker({
               <button
                 type="button"
                 onClick={() => {
-                  setFormData({ ...formData, customerId: '' });
+                  setFormData({ ...formData, customerId: '', smsConsent: true });
                   setCustomerSearch('');
                   setSelectedCustomerName('');
                   setOpen(false);

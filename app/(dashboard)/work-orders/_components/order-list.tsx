@@ -1,9 +1,11 @@
 'use client';
 
+import { SmsFailureCard } from '@/components/sms-failure-note';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { formatPhone } from '@/lib/phone';
+import { formatDateTimePadded } from '@/lib/time';
 import { STATUSES } from '../_lib/constants';
-import { displayTotal, orderedLabelsFor, orderedParts, statusColor } from '../_lib/helpers';
+import { displayTotal, orderedLabelsFor, orderedParts, showsAwaiting, statusColor } from '../_lib/helpers';
 import type { WorkOrder } from '../_lib/types';
 
 interface OrderListProps {
@@ -12,7 +14,6 @@ interface OrderListProps {
   onSearchChange: (value: string) => void;
   filter: string;
   onFilterChange: (value: string) => void;
-  sendingSmsId: string | null;
   onPreview: (order: WorkOrder) => void;
   onEdit: (order: WorkOrder) => void;
   onDelete: (id: string) => void;
@@ -21,7 +22,7 @@ interface OrderListProps {
 }
 
 export function OrderList({
-  orders: filtered, search, onSearchChange, filter, onFilterChange, sendingSmsId,
+  orders: filtered, search, onSearchChange, filter, onFilterChange,
   onPreview, onEdit, onDelete, onStatusChange, onSendReviewSms,
 }: OrderListProps) {
   const { t } = useLanguage();
@@ -87,7 +88,7 @@ export function OrderList({
                     >
                       {order.orderNumber}
                     </button>
-                    {orderedParts(order.items, orderedLabels).length > 0 && (
+                    {showsAwaiting(order.status) && orderedParts(order.items, orderedLabels).length > 0 && (
                       <div className="mt-1">
                         <span className="px-2 py-0.5 text-xs rounded bg-orange-100 text-orange-800">
                           {t('awaitingStockBadge')}: {orderedParts(order.items, orderedLabels).join(', ')}
@@ -112,7 +113,7 @@ export function OrderList({
                       className={`px-2 py-1 rounded-full text-xs font-medium border-0 cursor-pointer ${statusColor(order.status)}`}
                     >
                       {STATUSES.map(s => (
-                        <option key={s.value} value={s.value}>{t(s.labelKey)}</option>
+                        <option key={s.value} value={s.value} className={statusColor(s.value)}>{t(s.labelKey)}</option>
                       ))}
                     </select>
                   </td>
@@ -134,28 +135,36 @@ export function OrderList({
                         {t('delete')}
                       </button>
                       {order.reviewSmsStatus === 'sent' ? (
-                        <span className="px-3 py-1 text-xs text-green-700 bg-green-100 rounded">
-                          {t('reviewSmsSent')}
-                        </span>
-                      ) : order.reviewSmsStatus === 'failed' ? (
-                        <>
-                          <span className="px-3 py-1 text-xs text-red-700 bg-red-100 rounded">{t('reviewSmsFailed')}</span>
+                        <span className="inline-flex flex-wrap items-center gap-1">
+                          <span className="px-3 py-1 text-xs text-green-700 bg-green-100 rounded">{t('reviewSmsSent')}</span>
+                          {order.reviewSmsSentAt && (
+                            <span data-testid="review-sent-at" className="text-xs text-gray-500">
+                              {t('smsSentOn')} {formatDateTimePadded(order.reviewSmsSentAt)}
+                            </span>
+                          )}
                           <button
                             onClick={() => onSendReviewSms(order.id)}
-                            disabled={sendingSmsId === order.id}
-                            className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                            className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
                           >
-                            {sendingSmsId === order.id ? t('sending') : t('sendReviewSms')}
+                            {t('sendReviewSms')}
                           </button>
-                        </>
+                        </span>
                       ) : (
-                        <button
-                          onClick={() => onSendReviewSms(order.id)}
-                          disabled={sendingSmsId === order.id}
-                          className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
-                        >
-                          {sendingSmsId === order.id ? t('sending') : t('sendReviewSms')}
-                        </button>
+                        order.reviewSmsStatus === 'failed' ? (
+                          <SmsFailureCard
+                            kind="review"
+                            title={t('reviewSmsFailed')}
+                            failure={order.reviewSmsFailure}
+                            onRetry={() => onSendReviewSms(order.id)}
+                          />
+                        ) : (
+                          <button
+                            onClick={() => onSendReviewSms(order.id)}
+                            className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                          >
+                            {t('sendReviewSms')}
+                          </button>
+                        )
                       )}
                     </div>
                   </td>

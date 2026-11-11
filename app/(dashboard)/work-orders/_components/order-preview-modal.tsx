@@ -1,9 +1,12 @@
 'use client';
 
+import { SmsFailureNote } from '@/components/sms-failure-note';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { formatPhone } from '@/lib/phone';
+import { formatPln } from '@/lib/money';
+import { formatDateTimePadded } from '@/lib/time';
 import { ITEM_TYPES, STATUSES } from '../_lib/constants';
-import { displayTotal, orderedLabelsFor, orderedParts, statusColor } from '../_lib/helpers';
+import { displayTotal, orderedLabelsFor, orderedParts, previewElements, showsAwaiting, statusColor } from '../_lib/helpers';
 import type { WorkOrder } from '../_lib/types';
 
 interface OrderPreviewModalProps {
@@ -73,7 +76,7 @@ export function OrderPreviewModal({ order: previewOrder, onClose, onEdit }: Orde
                 {displayTotal(previewOrder)}
               </p>
               {previewOrder.deposit && (
-                <p className="text-xs text-gray-500">{t('deposit')}: {parseFloat(previewOrder.deposit).toFixed(2)} zł</p>
+                <p className="text-xs text-gray-500">{t('deposit')}: {formatPln(parseFloat(previewOrder.deposit))}</p>
               )}
             </div>
           </div>
@@ -93,21 +96,41 @@ export function OrderPreviewModal({ order: previewOrder, onClose, onEdit }: Orde
                       {(item.olSph || item.olCyl) && (
                         <span>OL: {[item.olSph, item.olCyl, item.olAxis && `ax${item.olAxis}`].filter(Boolean).join(' / ')}</span>
                       )}
-                      {item.frameModel && <span>{t('frame')}: {item.frameModel}{item.ownFrame ? ` (${t('ownFrame')})` : ''}</span>}
-                      {orderedParts([item], orderedLabels).length > 0 && (
+                      {showsAwaiting(previewOrder.status) && orderedParts([item], orderedLabels).length > 0 && (
                         <span className="text-orange-700">{t('awaitingStockBadge')}: {orderedParts([item], orderedLabels).join(', ')}</span>
                       )}
-                      {(item.framePrice || item.lensPrice) && (
-                        <span>
-                          {item.framePrice ? `${t('frame')}: ${item.framePrice} zł` : ''}
-                          {item.framePrice && item.lensPrice ? ' | ' : ''}
-                          {item.lensPrice ? `${t('lenses')}: ${item.lensPrice} zł` : ''}
-                        </span>
-                      )}
                     </div>
+                    <ul className="mt-1 space-y-0.5 text-xs text-gray-700">
+                      {previewElements(item, t).map(row => (
+                        <li key={row.label} className="flex flex-wrap gap-x-2">
+                          <span className="w-24 shrink-0 text-gray-500">{row.label}</span>
+                          <span>{row.text}</span>
+                          {row.price && <span className="ml-auto">{formatPln(Number(row.price))}</span>}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Prośba o opinię */}
+          {previewOrder.reviewSmsStatus === 'sent' && (
+            <p className="text-sm">
+              <span className="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">{t('reviewSmsSent')}</span>
+              {previewOrder.reviewSmsSentAt && (
+                <span data-testid="preview-review-sent-at" className="ml-2 text-xs text-gray-500">
+                  {t('smsSentOn')} {formatDateTimePadded(previewOrder.reviewSmsSentAt)}
+                </span>
+              )}
+            </p>
+          )}
+
+          {previewOrder.reviewSmsStatus === 'failed' && (
+            <div className="text-sm">
+              <span className="px-2 py-1 text-xs rounded-full bg-red-100 text-red-700">{t('reviewSmsFailed')}</span>
+              <div className="mt-1"><SmsFailureNote kind="preview-review" failure={previewOrder.reviewSmsFailure} /></div>
             </div>
           )}
 

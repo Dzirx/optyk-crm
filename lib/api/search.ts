@@ -64,3 +64,8 @@ export function workOrderSearchWhere(q: string | undefined): Prisma.WorkOrderWhe
   );
 }
 
+
+export function inventorySearchWhere(q: string | undefined): Prisma.InventoryItemWhereInput[] {
+  if (!q) return [];
+  return [{ OR: [{ name: contains(q) }, { category: contains(q) }, { notes: contains(q) }] }];
+}

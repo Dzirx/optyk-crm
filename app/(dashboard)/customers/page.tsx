@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { Pagination } from '@/components/pagination';
 import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
+import { formatDatePadded } from '@/lib/time';
 import { formatPhone as formatPhoneDisplay } from '@/lib/phone';
 
 interface Customer {
@@ -16,6 +17,7 @@ interface Customer {
   smsConsent: boolean;
   createdAt: string;
   visitCount?: number;
+  lastReviewSmsAt?: string | null;
 }
 
 const PAGE_SIZE = 50;
@@ -312,6 +314,7 @@ export default function CustomersPage() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t('email')}</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t('smsConsent')}</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t('visitsCount')}</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t('lastReviewRequest')}</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t('actions')}</th>
               </tr>
             </thead>
@@ -334,6 +337,9 @@ export default function CustomersPage() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {customer.visitCount || 0}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {customer.lastReviewSmsAt ? formatDatePadded(customer.lastReviewSmsAt) : '—'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     <div className="flex gap-2">

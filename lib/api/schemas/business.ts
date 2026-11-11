@@ -11,6 +11,10 @@ const smsConfig = z.custom<Prisma.InputJsonObject>(
   'Nieprawidłowa konfiguracja dostawcy SMS',
 );
 
+const BAD_WINDOW = 'Okno wysyłki przypomnień: podaj godziny (od musi być wcześniej niż do)';
+export const WINDOW_ORDER_ERROR = 'Godzina „od” musi być wcześniejsza niż „do”';
+const windowMinute = z.number({ error: BAD_WINDOW }).int(BAD_WINDOW).min(0, BAD_WINDOW).max(1440, BAD_WINDOW);
+
 export const createBusinessSchema = z.object({
   name: z.string({ error: REQUIRED }).min(1, REQUIRED),
   phone: z.string().nullish(),
@@ -19,7 +23,10 @@ export const createBusinessSchema = z.object({
   smsConfig: smsConfig.nullish(),
   reminderSmsTemplate: z.string().nullish(),
   reviewSmsTemplate: z.string().nullish(),
-});
+  reminderWindowStart: windowMinute.optional(),
+  reminderWindowEnd: windowMinute.optional(),
+  autoReminders: z.boolean().optional(),
+}).refine((b) => b.reminderWindowStart === undefined || b.reminderWindowEnd === undefined || b.reminderWindowStart < b.reminderWindowEnd, WINDOW_ORDER_ERROR);
 
 // PATCH: brak pola = bez zmiany.
 export const updateBusinessSchema = z.object({
@@ -30,4 +37,7 @@ export const updateBusinessSchema = z.object({
   smsConfig: smsConfig.optional(),
   reminderSmsTemplate: z.string().nullish(),
   reviewSmsTemplate: z.string().nullish(),
-});
+  reminderWindowStart: windowMinute.optional(),
+  reminderWindowEnd: windowMinute.optional(),
+  autoReminders: z.boolean().optional(),
+}).refine((b) => b.reminderWindowStart === undefined || b.reminderWindowEnd === undefined || b.reminderWindowStart < b.reminderWindowEnd, WINDOW_ORDER_ERROR);

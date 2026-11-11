@@ -1,5 +1,17 @@
 import { db } from './index';
 import bcrypt from 'bcryptjs';
+import { initAllStockHistories } from '@/lib/stock/init-all';
+
+/** Historia magazynu dla salonów, które jej nie mają (idempotentne). */
+async function initStockHistories(silent: boolean) {
+  // Błąd nie blokuje startu: historię i tak założy pierwsza operacja na magazynie (lockStock).
+  try {
+    const n = await initAllStockHistories();
+    if (!silent && n > 0) console.log(`📦 Historia magazynu założona w ${n} salonach`);
+  } catch (e) {
+    console.error('⚠️ Nie udało się założyć historii magazynu przy starcie (zostanie założona przy pierwszej operacji):', e);
+  }
+}
 
 async function seed() {
   const silent = process.argv.includes('--silent');
@@ -31,6 +43,7 @@ async function seed() {
       if (!silent) {
         console.log(`✅ Admin user already exists: ${existingAdmin.email}`);
       }
+      await initStockHistories(silent);
       process.exit(0);
     }
 
@@ -66,6 +79,7 @@ async function seed() {
     console.log(`   Name: ${newUser.name}`);
     console.log(`   Role: ${newUser.role}`);
 
+    await initStockHistories(silent);
     process.exit(0);
   } catch (error) {
     if (!silent) {

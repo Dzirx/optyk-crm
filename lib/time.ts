@@ -7,6 +7,16 @@ export function formatDatePl(value: Date | string): string {
   return new Date(value).toLocaleDateString('pl-PL', { timeZone: APP_TIME_ZONE });
 }
 
+/** Data dd.mm.rrrr z zerami wiodącymi (np. 05.11.2026) w strefie salonu. */
+export function formatDatePadded(value: Date | string): string {
+  return new Date(value).toLocaleDateString('pl-PL', { timeZone: APP_TIME_ZONE, day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+/** Data i godzina „dd.mm.rrrr, gg:mm” z zerami wiodącymi. */
+export function formatDateTimePadded(value: Date | string): string {
+  return `${formatDatePadded(value)}, ${formatTimePl(value)}`;
+}
+
 /** Godzina w formacie gg:mm w strefie salonu. */
 export function formatTimePl(value: Date | string): string {
   return new Date(value).toLocaleTimeString('pl-PL', { timeZone: APP_TIME_ZONE, hour: '2-digit', minute: '2-digit' });
@@ -52,4 +62,84 @@ export function todayRange(now = new Date()): { start: Date; end: Date } {
 /** Bieżący rok w strefie salonu. */
 export function currentYear(now = new Date()): number {
   return zonedParts(now).year;
+}
+
+/**
+ * Domyślna data inwentaryzacji rocznej (yyyy-mm-dd, strefa salonu): 31 grudnia bieżącego roku;
+ * w styczniu 31 grudnia roku poprzedniego (spis robi się po zamknięciu starego roku).
+ */
+export function yearEndDate(now = new Date()): string {
+  const { year, month } = zonedParts(now);
+  return `${month === 1 ? year - 1 : year}-12-31`;
+}
+
+/** Data i godzina „dd.mm.rrrr, gg:mm” w strefie salonu. */
+export function formatDateTimePl(value: Date | string): string {
+  return `${formatDatePl(value)}, ${formatTimePl(value)}`;
+}
+
+/** Minuty od północy w strefie salonu (0-1439). */
+export function minutesOfDay(now = new Date()): number {
+  const p = zonedParts(now);
+  return p.hour * 60 + p.minute;
+}
+
+/** Dzisiejsza data (yyyy-mm-dd) w strefie salonu. */
+export function todayIso(now = new Date()): string {
+  const p = zonedParts(now);
+  return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+}
+
+/** Ostatnia chwila (ms) dnia kalendarzowego yyyy-mm-dd w strefie salonu: początek następnego dnia minus 1 ms. */
+export function endOfZonedDay(isoDate: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!m) throw new Error(`Nieprawidłowa data: ${isoDate}`);
+  return new Date(startOfZonedDay(Number(m[1]), Number(m[2]), Number(m[3]) + 1).getTime() - 1);
+}
+
+const ISO_DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Czy tekst to istniejąca data kalendarzowa yyyy-mm-dd (np. 2026-02-30 nie jest). */
+export function isIsoDay(value: string): boolean {
+  const m = ISO_DAY_RE.exec(value);
+  if (!m) return false;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3]);
+}
+
+/** Dokładne granice dnia kalendarzowego yyyy-mm-dd w strefie salonu: [start, end). W dni zmiany czasu dzień ma 23 lub 25 godzin. */
+export function dayBounds(isoDate: string): { start: Date; end: Date } {
+  if (!isIsoDay(isoDate)) throw new Error(`Nieprawidłowa data: ${isoDate}`);
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return { start: startOfZonedDay(y, m, d), end: startOfZonedDay(y, m, d + 1) };
+}
+
+/** Dzień kalendarzowy przesunięty o `days` (może być ujemne): yyyy-mm-dd → yyyy-mm-dd. */
+export function addDaysIso(isoDate: string, days: number): string {
+  if (!isIsoDay(isoDate)) throw new Error(`Nieprawidłowa data: ${isoDate}`);
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+/** Dzień tygodnia dla daty kalendarzowej: 0 = niedziela … 6 = sobota. */
+export function weekdayIndex(isoDate: string): number {
+  if (!isIsoDay(isoDate)) throw new Error(`Nieprawidłowa data: ${isoDate}`);
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+const WEEKDAYS = {
+  pl: ['Niedziela', 'Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota'],
+  en: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+};
+
+/** Nazwa dnia tygodnia z wielkiej litery („Środa” / „Wednesday”). */
+export function weekdayName(isoDate: string, language: string): string {
+  return WEEKDAYS[language === 'en' ? 'en' : 'pl'][weekdayIndex(isoDate)];
+}
+
+/** „Środa, 11.11.2026” (EN: „Wednesday, 11.11.2026”). */
+export function formatDayHeading(isoDate: string, language: string): string {
+  const [y, m, d] = isoDate.split('-');
+  return `${weekdayName(isoDate, language)}, ${d}.${m}.${y}`;
 }

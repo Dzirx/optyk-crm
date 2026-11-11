@@ -69,9 +69,7 @@ function costForDb(cost: unknown): number | null {
   return typeof cost === 'number' && Number.isInteger(cost) ? cost : null;
 }
 
-/** Zapis do historii SMS. Błąd zapisu tylko w logach serwera — nie przerywa wysyłki. */
-export async function logVisitSms(entry: {
-  visitId: string;
+interface SmsLogEntry {
   smsType: VisitSmsType;
   phone: string;
   message: string;
@@ -79,11 +77,14 @@ export async function logVisitSms(entry: {
   errorMessage?: string | null;
   messageId?: string | null;
   cost?: unknown;
-}): Promise<void> {
+}
+
+/** Zapis do historii SMS. Błąd zapisu tylko w logach serwera — nie przerywa wysyłki. */
+async function writeSmsLog(target: { visitId: string } | { workOrderId: string }, entry: SmsLogEntry): Promise<void> {
   try {
     await db.smsLog.create({
       data: {
-        visitId: entry.visitId,
+        ...target,
         smsType: entry.smsType,
         phone: entry.phone,
         message: entry.message,
@@ -94,6 +95,68 @@ export async function logVisitSms(entry: {
       },
     });
   } catch (error) {
-    console.error(`[SMS] Nie udało się zapisać logu SMS dla wizyty ${entry.visitId}:`, error);
+    console.error(`[SMS] Nie udało się zapisać logu SMS (${JSON.stringify(target)}):`, error);
   }
+}
+
+export const logVisitSms = (entry: SmsLogEntry & { visitId: string }) => writeSmsLog({ visitId: entry.visitId }, entry);
+
+/** Log SMS z prośbą o opinię wysłanego ze zlecenia (smsType zawsze 'review'). */
+export const logWorkOrderSms = (entry: Omit<SmsLogEntry, 'smsType'> & { workOrderId: string }) =>
+  writeSmsLog({ workOrderId: entry.workOrderId }, { ...entry, smsType: 'review' });
+
+// --- Ręczna wysyłka prośby o opinię (wizyta / zlecenie) -------------------------------------------
+// Przycisk jest zawsze dostępny (także po 'sent'), więc rezerwacja jest przejściowym stanem 'sending':
+// compare-and-set na (status, czas) odczytanych przed wysyłką. Równoległe żądania widzą 'sending'
+// albo inny czas i dostają 409. Porzucone 'sending' (awaria między rezerwacją a wynikiem) starsze niż
+// 2 minuty można zarezerwować ponownie. W 'sending' czas oznacza chwilę rezerwacji.
+
+export const REVIEW_CLAIM_STALE_MS = 2 * 60 * 1000;
+
+export interface ReviewPrev {
+  status: 'pending' | 'sent' | 'failed' | 'sending' | null;
+  sentAt: Date | null;
+}
+
+/** Czy świeża rezerwacja innego żądania nadal trwa (wtedy odpowiadamy 409 bez próby rezerwacji). */
+export function reviewClaimInFlight(prev: ReviewPrev, now = Date.now()): boolean {
+  return prev.status === 'sending' && !!prev.sentAt && now - prev.sentAt.getTime() < REVIEW_CLAIM_STALE_MS;
+}
+
+/** Czas w kolumnie ma mikrosekundy, JS milisekundy — porównujemy w zakresie 1 ms. */
+export function sentAtWhere(prev: Date | null): null | { gte: Date; lt: Date } {
+  return prev ? { gte: prev, lt: new Date(prev.getTime() + 1) } : null;
+}
+
+/** Stan po zakończeniu: sukces → 'sent' + nowy czas; błąd → poprzednie 'sent' albo 'failed'. */
+function reviewOutcome(ok: boolean, prev: ReviewPrev) {
+  if (ok) return { reviewSmsStatus: 'sent' as const, reviewSmsSentAt: new Date() };
+  if (prev.status === 'sent') return { reviewSmsStatus: 'sent' as const, reviewSmsSentAt: prev.sentAt };
+  return { reviewSmsStatus: 'failed' as const, reviewSmsSentAt: null };
+}
+
+export async function claimVisitReview(visitId: string, prev: ReviewPrev): Promise<boolean> {
+  if (reviewClaimInFlight(prev)) return false;
+  const res = await db.visit.updateMany({
+    where: { id: visitId, reviewSmsStatus: prev.status, reviewSmsSentAt: sentAtWhere(prev.sentAt) },
+    data: { reviewSmsStatus: 'sending', reviewSmsSentAt: new Date() },
+  });
+  return res.count === 1;
+}
+
+export async function finishVisitReview(visitId: string, ok: boolean, prev: ReviewPrev): Promise<void> {
+  await db.visit.update({ where: { id: visitId }, data: reviewOutcome(ok, prev) });
+}
+
+export async function claimOrderReview(orderId: string, businessId: string, prev: ReviewPrev): Promise<boolean> {
+  if (reviewClaimInFlight(prev)) return false;
+  const res = await db.workOrder.updateMany({
+    where: { id: orderId, businessId, reviewSmsStatus: prev.status ?? undefined, reviewSmsSentAt: sentAtWhere(prev.sentAt) },
+    data: { reviewSmsStatus: 'sending', reviewSmsSentAt: new Date() },
+  });
+  return res.count === 1;
+}
+
+export async function finishOrderReview(orderId: string, ok: boolean, prev: ReviewPrev): Promise<void> {
+  await db.workOrder.update({ where: { id: orderId }, data: reviewOutcome(ok, prev) });
 }

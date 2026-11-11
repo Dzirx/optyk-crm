@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { withAccess } from '@/lib/api/handler';
-import { createBusinessSchema, updateBusinessSchema } from '@/lib/api/schemas/business';
+import { WINDOW_ORDER_ERROR, createBusinessSchema, updateBusinessSchema } from '@/lib/api/schemas/business';
+import { smsGatewayConfigured } from '@/lib/sms/configured';
 
 // Salon jest 1:1 z kontem. Te endpointy działają także bez salonu (POST go zakłada),
 // a po końcu okresu próbnego odpowiadają 403 (withAccess).
@@ -12,7 +13,12 @@ const SERVER_ERROR = 'Wystąpił błąd serwera';
 export const GET = withAccess(
   async ({ userId }) => {
     const business = await db.business.findFirst({ where: { userId } });
-    return NextResponse.json({ business: business ?? null }, { status: 200 });
+    // smsReady: czy salon może wysyłać przypomnienia (dostawca, klucz i szablon); sam klucz nie jest do tego potrzebny w formularzach.
+    const gateway = !!business && smsGatewayConfigured(business.smsProvider, business.smsConfig);
+    const smsReady = gateway && !!business.reminderSmsTemplate?.trim();
+    // reviewSmsReady: to samo dla prośby o opinię (szablon opinii).
+    const reviewSmsReady = gateway && !!business.reviewSmsTemplate?.trim();
+    return NextResponse.json({ business: business ? { ...business, smsGatewayReady: gateway, smsReady, reviewSmsReady } : null }, { status: 200 });
   },
   { error: SERVER_ERROR },
 );
@@ -35,6 +41,9 @@ export const POST = withAccess(
         smsConfig: (body.smsConfig || null) as Prisma.InputJsonObject,
         reminderSmsTemplate: body.reminderSmsTemplate || null,
         reviewSmsTemplate: body.reviewSmsTemplate || null,
+        ...(body.reminderWindowStart !== undefined && { reminderWindowStart: body.reminderWindowStart }),
+        ...(body.reminderWindowEnd !== undefined && { reminderWindowEnd: body.reminderWindowEnd }),
+        ...(body.autoReminders !== undefined && { autoReminders: body.autoReminders }),
       },
     });
 
@@ -49,7 +58,11 @@ export const PATCH = withAccess(
     const business = await db.business.findFirst({ where: { userId } });
     if (!business) return NextResponse.json({ error: 'Nie znaleziono firmy' }, { status: 404 });
 
-    const { name, phone, googleReviewUrl, smsProvider, smsConfig, reminderSmsTemplate, reviewSmsTemplate } = body;
+    const { name, phone, googleReviewUrl, smsProvider, smsConfig, reminderSmsTemplate, reviewSmsTemplate, reminderWindowStart, reminderWindowEnd, autoReminders } = body;
+    // Okno sprawdzamy razem z zapisaną wartością drugiego końca.
+    if ((reminderWindowStart ?? business.reminderWindowStart) >= (reminderWindowEnd ?? business.reminderWindowEnd)) {
+      return NextResponse.json({ error: WINDOW_ORDER_ERROR }, { status: 400 });
+    }
     const updated = await db.business.update({
       where: { id: business.id },
       data: {
@@ -60,6 +73,9 @@ export const PATCH = withAccess(
         ...(smsConfig !== undefined && { smsConfig }),
         ...(reminderSmsTemplate !== undefined && { reminderSmsTemplate }),
         ...(reviewSmsTemplate !== undefined && { reviewSmsTemplate }),
+        ...(reminderWindowStart !== undefined && { reminderWindowStart }),
+        ...(reminderWindowEnd !== undefined && { reminderWindowEnd }),
+        ...(autoReminders !== undefined && { autoReminders }),
       },
     });
 

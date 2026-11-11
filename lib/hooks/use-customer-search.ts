@@ -6,6 +6,7 @@ export interface CustomerHit {
   name: string;
   surname: string;
   phone: string;
+  smsConsent: boolean;
 }
 
 const RESULT_LIMIT = 20;

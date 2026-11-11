@@ -1,26 +1,43 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Pagination } from '@/components/pagination';
+import { ReviewRequestModal } from '@/components/review-request-modal';
 import { useLanguage } from '@/lib/i18n/language-context';
-import { isoToLocalInput, localInputToIso, monthRangeIso, toLocalDateStr } from './_lib/dates';
+import { visitsLabel } from '@/lib/plural';
+import { addDaysIso, dayBounds, formatDatePadded, formatDayHeading, isIsoDay, todayIso } from '@/lib/time';
+import { isoToLocalInput, localInputToIso } from './_lib/dates';
+import { autoReminderDay, storedReminderDay } from './_lib/reminder';
 import { emptyFormData, emptyNewCustomerData } from './_lib/forms';
 import type { NewCustomerData, Visit, VisitFormData } from './_lib/types';
-import { VisitCalendar } from './_components/visit-calendar';
+import { VisitDayNav } from './_components/visit-day-nav';
 import { VisitFormModal } from './_components/visit-form-modal';
 import { VisitList } from './_components/visit-list';
 
+const PAGE_SIZE = 50;
+
 export default function VisitsPage() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const filterCustomerId = searchParams?.get('customerId');
+  const filterCustomerId = searchParams?.get('customerId') || null;
+  // Wybrany dzień trzymamy w adresie (?day=yyyy-mm-dd); brak lub zła wartość = dziś w strefie salonu.
+  const dayParam = searchParams?.get('day') ?? '';
+  const day = isIsoDay(dayParam) ? dayParam : todayIso();
 
   const [visits, setVisits] = useState<Visit[]>([]);
+  const [reviewVisit, setReviewVisit] = useState<Visit | null>(null);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingVisit, setEditingVisit] = useState<Visit | null>(null);
-  const [selectedDate, setSelectedDate] = useState<string>(toLocalDateStr(new Date()));
+  // Strona widoku „wizyty klienta”; zmiana klienta wraca na stronę 1.
+  const [pageState, setPageState] = useState({ key: filterCustomerId, page: 1 });
+  const page = pageState.key === filterCustomerId ? pageState.page : 1;
+  const setPage = (p: number) => setPageState({ key: filterCustomerId, page: p });
+  const [customerLabel, setCustomerLabel] = useState('');
 
   const [formData, setFormData] = useState<VisitFormData>(emptyFormData());
   const [formError, setFormError] = useState('');
@@ -29,10 +46,19 @@ export default function VisitsPage() {
   const [customerSearch, setCustomerSearch] = useState('');
   // Nazwa wybranego klienta: może go nie być w wynikach wyszukiwania (np. przy edycji wizyty).
   const [selectedCustomerName, setSelectedCustomerName] = useState('');
+  // Czy salon ma skonfigurowane SMS (klucz API i szablon przypomnienia); null = jeszcze nie wiadomo.
+  const [smsReady, setSmsReady] = useState<boolean | null>(null);
+  const [autoReminders, setAutoReminders] = useState<boolean | null>(null);
+  const [reviewSmsReady, setReviewSmsReady] = useState<boolean | null>(null);
+  const [smsGatewayReady, setSmsGatewayReady] = useState<boolean | null>(null);
+  const [reminderWindow, setReminderWindow] = useState<{ start: number; end: number } | null>(null);
   const [newCustomerData, setNewCustomerData] = useState<NewCustomerData>(emptyNewCustomerData());
 
-  // Pobieramy tylko to, co widać: miesiąc z kalendarza albo wizyty jednego klienta (?customerId=).
-  const month = selectedDate.slice(0, 7);
+  const setDay = (next: string) => router.replace(`/visits?day=${next}`, { scroll: false });
+  const clearCustomerFilter = () => router.replace(`/visits?day=${day}`, { scroll: false });
+
+  // Pobieramy tylko to, co widać: jeden dzień (dokładne granice w strefie salonu)
+  // albo jedna strona wizyt wybranego klienta (?customerId=).
   const requestSeq = useRef(0);
 
   const fetchVisits = useCallback(async () => {
@@ -42,10 +68,12 @@ export default function VisitsPage() {
       const params = new URLSearchParams();
       if (filterCustomerId) {
         params.set('customerId', filterCustomerId);
+        params.set('page', String(page));
+        params.set('pageSize', String(PAGE_SIZE));
       } else {
-        const range = monthRangeIso(month + '-01');
-        params.set('from', range.from);
-        params.set('to', range.to);
+        const { start, end } = dayBounds(day);
+        params.set('from', start.toISOString());
+        params.set('to', end.toISOString());
       }
       const response = await fetch(`/api/visits?${params}`);
       const data = await response.json();
@@ -55,7 +83,22 @@ export default function VisitsPage() {
         throw new Error(data.error || 'Failed to fetch visits');
       }
 
-      setVisits(data.visits || []);
+      const found: Visit[] = data.visits || [];
+      if (filterCustomerId) {
+        const count: number = data.total ?? found.length;
+        const lastPage = Math.max(1, Math.ceil(count / PAGE_SIZE));
+        if (found.length === 0 && page > lastPage) {
+          setPage(lastPage); // np. po usunięciu ostatniej wizyty z ostatniej strony
+          return;
+        }
+        setTotal(count);
+        setCustomerLabel(found[0]?.customerName ?? '');
+      } else {
+        // Wewnątrz dnia: od najwcześniejszej; przy tej samej godzinie stała kolejność po id.
+        found.sort((a, b) => a.visitDate.localeCompare(b.visitDate) || a.id.localeCompare(b.id));
+        setTotal(found.length);
+      }
+      setVisits(found);
       setError('');
     } catch (err) {
       if (seq !== requestSeq.current) return;
@@ -63,11 +106,50 @@ export default function VisitsPage() {
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [month, filterCustomerId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [day, filterCustomerId, page]);
 
   useEffect(() => {
     fetchVisits();
   }, [fetchVisits]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/business')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled) return;
+        setSmsReady(!!d?.business?.smsReady);
+        setAutoReminders(!!d?.business?.autoReminders);
+        setReviewSmsReady(!!d?.business?.reviewSmsReady);
+        setSmsGatewayReady(!!d?.business?.smsGatewayReady);
+        const b = d?.business;
+        if (b && typeof b.reminderWindowStart === 'number' && typeof b.reminderWindowEnd === 'number') {
+          setReminderWindow({ start: b.reminderWindowStart, end: b.reminderWindowEnd });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setSmsReady(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Nazwa klienta do paska filtra, gdy klient nie ma jeszcze wizyt.
+  useEffect(() => {
+    if (!filterCustomerId || customerLabel) return;
+    let cancelled = false;
+    fetch(`/api/customers/${filterCustomerId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d?.customer) setCustomerLabel(`${d.customer.name} ${d.customer.surname}`);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [filterCustomerId, customerLabel]);
 
   const handleCreateCustomer = async () => {
     if (!newCustomerData.name || !newCustomerData.surname || !newCustomerData.phone) {
@@ -90,7 +172,7 @@ export default function VisitsPage() {
       }
 
       // Select the new customer
-      setFormData({ ...formData, customerId: data.customer.id });
+      setFormData({ ...formData, customerId: data.customer.id, smsConsent: data.customer.smsConsent !== false });
       setSelectedCustomerName(`${data.customer.name} ${data.customer.surname}`);
 
       // Reset and hide new customer form
@@ -102,6 +184,20 @@ export default function VisitsPage() {
     } finally {
       setFormLoading(false);
     }
+  };
+
+  // Dzień przypomnienia wysyłamy tylko, gdy pole jest aktywne (SMS skonfigurowane, klient ze zgodą);
+  // wtedy pusty dzień = bez przypomnienia. W przeciwnym razie nie ruszamy zapisanej wartości.
+  const visitPayload = () => {
+    const { customerId, visitType, notes } = formData;
+    const reminderActive = autoReminders === true && smsReady === true && formData.smsConsent;
+    return {
+      customerId,
+      visitType,
+      notes,
+      visitDate: localInputToIso(formData.visitDate),
+      ...(reminderActive ? { reminderSmsDate: formData.reminderSmsDate || null } : {}),
+    };
   };
 
   const handleAddVisit = async (e: React.FormEvent) => {
@@ -119,11 +215,7 @@ export default function VisitsPage() {
       const response = await fetch('/api/visits', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...formData,
-          visitDate: localInputToIso(formData.visitDate),
-          reminderSmsDate: localInputToIso(formData.reminderSmsDate),
-        }),
+        body: JSON.stringify(visitPayload()),
       });
 
       const data = await response.json();
@@ -137,7 +229,10 @@ export default function VisitsPage() {
       setShowNewCustomerForm(false);
       setCustomerSearch('');
       setNewCustomerData(emptyNewCustomerData());
-      fetchVisits();
+      // Nowa wizyta na inny dzień: przechodzimy na ten dzień, żeby nie zniknęła z widoku.
+      const newDay = todayIso(new Date(localInputToIso(formData.visitDate) ?? Date.now()));
+      if (!filterCustomerId && newDay !== day) setDay(newDay);
+      else fetchVisits();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Failed to create visit');
     } finally {
@@ -156,11 +251,7 @@ export default function VisitsPage() {
       const response = await fetch(`/api/visits/${editingVisit.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...formData,
-          visitDate: localInputToIso(formData.visitDate),
-          reminderSmsDate: localInputToIso(formData.reminderSmsDate),
-        }),
+        body: JSON.stringify(visitPayload()),
       });
 
       const data = await response.json();
@@ -200,6 +291,12 @@ export default function VisitsPage() {
   };
 
   const handleSendSms = async (visitId: string, smsType: 'reminder' | 'review') => {
+    // Prośba o opinię zawsze przechodzi przez okno potwierdzenia (pokazuje ostatnią prośbę klienta).
+    if (smsType === 'review') {
+      const visit = visits.find((v) => v.id === visitId);
+      if (visit) setReviewVisit(visit);
+      return;
+    }
     try {
       const response = await fetch(`/api/visits/${visitId}/send-sms`, {
         method: 'POST',
@@ -216,6 +313,7 @@ export default function VisitsPage() {
       fetchVisits();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send SMS');
+      fetchVisits(); // nieudana wysyłka zapisuje status i powód — pokaż je w wierszu
     }
   };
 
@@ -227,23 +325,25 @@ export default function VisitsPage() {
       visitDate: isoToLocalInput(visit.visitDate),
       visitType: visit.visitType || '',
       notes: visit.notes || '',
-      reminderSmsDate: isoToLocalInput(visit.reminderSmsDate),
+      reminderSmsDate: storedReminderDay(visit.reminderSmsDate),
+      reminderTouched: false,
+      smsConsent: visit.smsConsent,
     });
   };
 
   const exportToCSV = () => {
-    if (filteredVisits.length === 0) {
+    if (visits.length === 0) {
       alert(t('noVisitsToExport'));
       return;
     }
 
     const headers = [t('customer'), t('phone'), t('visitDate'), t('type'), t('reminderSMS'), t('status'), t('reviewSMS'), t('status')];
-    const rows = filteredVisits.map(v => [
+    const rows = visits.map(v => [
       v.customerName,
       v.customerPhone,
       new Date(v.visitDate).toLocaleString(),
       v.visitType || '-',
-      v.reminderSmsDate ? new Date(v.reminderSmsDate).toLocaleString() : '-',
+      v.reminderSmsDate ? formatDatePadded(v.reminderSmsDate) : '-',
       v.reminderSmsStatus || '-',
       v.reviewSmsDate ? new Date(v.reviewSmsDate).toLocaleString() : '-',
       v.reviewSmsStatus || '-',
@@ -259,7 +359,7 @@ export default function VisitsPage() {
     const url = URL.createObjectURL(blob);
 
     link.setAttribute('href', url);
-    link.setAttribute('download', `visits_${toLocalDateStr(new Date())}.csv`);
+    link.setAttribute('download', `visits_${filterCustomerId ? todayIso() : day}.csv`);
     link.style.visibility = 'hidden';
 
     document.body.appendChild(link);
@@ -267,31 +367,12 @@ export default function VisitsPage() {
     document.body.removeChild(link);
   };
 
-  const goToToday = () => {
-    setSelectedDate(toLocalDateStr(new Date()));
+  const openAddModal = () => {
+    // Dodawanie z widoku dnia: formularz od razu na wybrany dzień (godzina do poprawienia).
+    const visitDate = filterCustomerId ? '' : `${day}T09:00`;
+    setFormData({ ...emptyFormData(), visitDate, reminderSmsDate: autoReminderDay(visitDate) });
+    setShowAddModal(true);
   };
-
-  const goToPreviousMonth = () => {
-    const date = new Date(selectedDate + 'T12:00:00');
-    date.setMonth(date.getMonth() - 1);
-    setSelectedDate(toLocalDateStr(date));
-  };
-
-  const goToNextMonth = () => {
-    const date = new Date(selectedDate + 'T12:00:00');
-    date.setMonth(date.getMonth() + 1);
-    setSelectedDate(toLocalDateStr(date));
-  };
-
-  let filteredVisits = visits;
-  if (filterCustomerId) {
-    filteredVisits = visits.filter(v => v.customerId === filterCustomerId);
-  } else {
-    filteredVisits = filteredVisits.filter(v => {
-      const visitDate = toLocalDateStr(new Date(v.visitDate));
-      return visitDate === selectedDate;
-    });
-  }
 
   const closeModal = () => {
     setShowAddModal(false);
@@ -304,9 +385,11 @@ export default function VisitsPage() {
     setNewCustomerData(emptyNewCustomerData());
   };
 
+  const customerMode = !!filterCustomerId;
+
   return (
     <div className="px-4 py-6 sm:px-0">
-      <div className="border-b border-gray-200 pb-5 flex justify-between items-center">
+      <div className="border-b border-gray-200 pb-5 flex flex-wrap justify-between items-center gap-3">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">{t('visitsTitle')}</h1>
           <p className="mt-2 text-sm text-gray-500">
@@ -316,13 +399,13 @@ export default function VisitsPage() {
         <div className="flex gap-2">
           <button
             onClick={exportToCSV}
-            className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
-            disabled={filteredVisits.length === 0}
+            className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50"
+            disabled={visits.length === 0}
           >
             {t('exportCSV')}
           </button>
           <button
-            onClick={() => setShowAddModal(true)}
+            onClick={openAddModal}
             className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
           >
             {t('addVisit')}
@@ -330,41 +413,82 @@ export default function VisitsPage() {
         </div>
       </div>
 
-      <div className="mt-4 flex gap-4">
-        {/* Left side - Calendar */}
-        <VisitCalendar
-          visits={visits}
-          selectedDate={selectedDate}
-          filteredCount={filteredVisits.length}
-          onSelectDate={setSelectedDate}
-          onPreviousMonth={goToPreviousMonth}
-          onNextMonth={goToNextMonth}
-          onToday={goToToday}
-        />
+      <div className="mt-4">
+        {customerMode ? (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg bg-blue-50 border border-blue-100 px-4 py-3">
+            <span className="text-sm text-gray-900">
+              {t('visitsOfCustomer')}: <span className="font-semibold">{customerLabel || '…'}</span>
+            </span>
+            <button
+              type="button"
+              onClick={clearCustomerFilter}
+              className="px-3 py-1 text-sm bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-100"
+            >
+              {t('visitsBackToDay')}
+            </button>
+          </div>
+        ) : (
+          <VisitDayNav
+            day={day}
+            heading={formatDayHeading(day, language)}
+            onChange={setDay}
+            onToday={() => setDay(todayIso())}
+            isToday={day === todayIso()}
+            previous={addDaysIso(day, -1)}
+            next={addDaysIso(day, 1)}
+          />
+        )}
 
-        {/* Right side - Filters and Visits */}
-        <div className="flex-1">
+        {error && (
+          <div className="mt-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+            {error}
+          </div>
+        )}
 
-          {error && (
-            <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-              {error}
-            </div>
-          )}
-
+        <div className="mt-4">
           <VisitList
             loading={loading}
-            visits={filteredVisits}
+            visits={visits}
+            showDate={customerMode}
+            emptyText={customerMode ? t('visitsNoneForCustomer') : t('visitsNoneThisDay')}
+            onAdd={customerMode ? undefined : openAddModal}
             onSendSms={handleSendSms}
+            smsReady={smsReady}
+            reviewSmsReady={reviewSmsReady}
+            smsGatewayReady={smsGatewayReady}
             onEdit={openEditModal}
             onDelete={handleDeleteVisit}
           />
         </div>
+
+        {reviewVisit && (
+          <ReviewRequestModal
+            customerId={reviewVisit.customerId}
+            customerName={reviewVisit.customerName}
+            sendUrl={`/api/visits/${reviewVisit.id}/send-sms`}
+            sendBody={{ smsType: 'review' }}
+            onClose={() => setReviewVisit(null)}
+            onSent={fetchVisits}
+            onFailed={fetchVisits}
+          />
+        )}
+
+        {!loading && !customerMode && visits.length > 0 && (
+          <p className="mt-3 text-sm text-gray-600">{visitsLabel(total, language)}</p>
+        )}
+        {customerMode && total > 0 && (
+          <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
+        )}
       </div>
 
       {/* Add/Edit Modal */}
       {(showAddModal || editingVisit) && (
         <VisitFormModal
           editing={!!editingVisit}
+          smsReady={smsReady}
+          autoReminders={autoReminders}
+          reminderWindow={reminderWindow}
+          reminderLocked={editingVisit?.reminderSmsStatus === 'sent'}
           selectedCustomerName={selectedCustomerName}
           setSelectedCustomerName={setSelectedCustomerName}
           formData={formData}

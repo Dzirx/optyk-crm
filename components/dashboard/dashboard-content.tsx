@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/language-context';
+import { formatPln } from '@/lib/money';
 
 interface RecentVisit {
   id: string;
@@ -189,7 +190,7 @@ export function DashboardContent({ userName, stats, recentVisits, readyWorkOrder
                     </div>
                     {order.totalAmount && (
                       <span className="text-sm font-semibold text-gray-700 flex-shrink-0">
-                        {Number(order.totalAmount).toFixed(2)} zł
+                        {formatPln(Number(order.totalAmount))}
                       </span>
                     )}
                   </div>

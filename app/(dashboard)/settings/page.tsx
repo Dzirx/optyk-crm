@@ -11,7 +11,17 @@ interface Business {
   googleReviewUrl: string;
   smsProvider: string;
   smsConfig: any;
+  reminderWindowStart: number;
+  reminderWindowEnd: number;
+  autoReminders: boolean;
 }
+
+/** Minuty od północy ↔ „gg:mm” dla pola time. */
+const minutesToTime = (m: number) => `${String(Math.floor(Math.min(m, 1439) / 60)).padStart(2, '0')}:${String(Math.min(m, 1439) % 60).padStart(2, '0')}`;
+const timeToMinutes = (v: string) => {
+  const [h, min] = v.split(':').map(Number);
+  return h * 60 + min;
+};
 
 export default function SettingsPage() {
   const { t } = useLanguage();
@@ -32,6 +42,9 @@ export default function SettingsPage() {
     smsConfig: {} as Record<string, string>,
     reminderSmsTemplate: '',
     reviewSmsTemplate: '',
+    reminderWindowStart: '09:00',
+    reminderWindowEnd: '17:00',
+    autoReminders: false,
   });
 
   useEffect(() => {
@@ -53,6 +66,9 @@ export default function SettingsPage() {
           smsConfig: data.business.smsConfig || {},
           reminderSmsTemplate: data.business.reminderSmsTemplate || '',
           reviewSmsTemplate: data.business.reviewSmsTemplate || '',
+          reminderWindowStart: minutesToTime(data.business.reminderWindowStart ?? 540),
+          reminderWindowEnd: minutesToTime(data.business.reminderWindowEnd ?? 1020),
+          autoReminders: data.business.autoReminders ?? false,
         });
       }
     } catch (err) {
@@ -82,6 +98,9 @@ export default function SettingsPage() {
           smsConfig: formData.smsConfig,
           reminderSmsTemplate: formData.reminderSmsTemplate,
           reviewSmsTemplate: formData.reviewSmsTemplate,
+          reminderWindowStart: timeToMinutes(formData.reminderWindowStart),
+          reminderWindowEnd: timeToMinutes(formData.reminderWindowEnd),
+          autoReminders: formData.autoReminders,
         }),
       });
 
@@ -128,6 +147,9 @@ export default function SettingsPage() {
         smsConfig: {},
         reminderSmsTemplate: '',
         reviewSmsTemplate: '',
+        reminderWindowStart: '09:00',
+        reminderWindowEnd: '17:00',
+        autoReminders: false,
       });
       setSuccess(t('businessDeletedSuccess'));
       setShowDeleteConfirm(false);
@@ -432,6 +454,49 @@ export default function SettingsPage() {
               </p>
             </div>
             <div className="mt-6 grid grid-cols-1 gap-y-6 gap-x-4">
+              <div>
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    data-testid="auto-reminders"
+                    checked={formData.autoReminders}
+                    onChange={(e) => setFormData({ ...formData, autoReminders: e.target.checked })}
+                    className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-gray-700">{t('autoRemindersLabel')}</span>
+                    <span className="block text-sm text-gray-500">{t(formData.autoReminders ? 'autoRemindersOnHelp' : 'autoRemindersOffHelp')}</span>
+                  </span>
+                </label>
+              </div>
+
+              {formData.autoReminders && (
+              <div>
+                <span className="block text-sm font-medium text-gray-700">{t('reminderWindowLabel')}</span>
+                <div className="mt-1 flex items-center gap-3">
+                  <label htmlFor="reminderWindowStart" className="text-sm text-gray-600">{t('reminderWindowFrom')}</label>
+                  <input
+                    id="reminderWindowStart"
+                    type="time"
+                    required
+                    value={formData.reminderWindowStart}
+                    onChange={(e) => setFormData({ ...formData, reminderWindowStart: e.target.value })}
+                    className="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900 bg-white"
+                  />
+                  <label htmlFor="reminderWindowEnd" className="text-sm text-gray-600">{t('reminderWindowTo')}</label>
+                  <input
+                    id="reminderWindowEnd"
+                    type="time"
+                    required
+                    value={formData.reminderWindowEnd}
+                    onChange={(e) => setFormData({ ...formData, reminderWindowEnd: e.target.value })}
+                    className="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900 bg-white"
+                  />
+                </div>
+                <p className="mt-2 text-sm text-gray-500">{t('reminderWindowHelp')}</p>
+              </div>
+              )}
+
               <div>
                 <label htmlFor="reminderSmsTemplate" className="block text-sm font-medium text-gray-700">
                   {t('reminderSmsTemplateLabel')}

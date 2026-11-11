@@ -3,7 +3,8 @@ import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { withBusiness } from '@/lib/api/handler';
 import { customerBelongsTo } from '@/lib/api/ownership';
-import { REMINDER_BEFORE_VISIT, REVIEW_AFTER_VISIT, updateVisitSchema } from '@/lib/api/schemas/visits';
+import { dayBounds, todayIso } from '@/lib/time';
+import { REMINDER_BEFORE_VISIT, REVIEW_AFTER_VISIT, reminderAfterVisitDay, updateVisitSchema } from '@/lib/api/schemas/visits';
 
 const NOT_FOUND = 'Nie znaleziono wizyty';
 
@@ -12,6 +13,16 @@ function sameMinute(value: Date | null, stored: Date | null): boolean {
   if (value === null) return stored === null;
   if (stored === null) return false;
   return Math.floor(value.getTime() / 60_000) === Math.floor(stored.getTime() / 60_000);
+}
+
+/**
+ * Czy dzień z formularza (początek dnia w strefie salonu) wskazuje ten sam dzień co zapisane przypomnienie.
+ * Starsze wizyty mają w bazie godzinę przypomnienia; zapis formularza z tym samym dniem jej nie zmienia.
+ */
+function sameDayAsStored(value: Date | null, stored: Date | null): boolean {
+  if (!value || !stored) return false;
+  const day = todayIso(value);
+  return value.getTime() === dayBounds(day).start.getTime() && day === todayIso(stored);
 }
 
 const badRequest = (error: string) => NextResponse.json({ error }, { status: 400 });
@@ -60,7 +71,8 @@ export const PATCH = withBusiness(
 
     // Po wysyłce nie wolno zmienić daty SMS. Formularz zawsze odsyła datę,
     // więc blokujemy tylko rzeczywistą zmianę (z dokładnością do minuty).
-    const reminderChanged = reminderSmsDate !== undefined && !sameMinute(reminderSmsDate, visit.reminderSmsDate);
+    const reminderChanged =
+      reminderSmsDate !== undefined && !sameMinute(reminderSmsDate, visit.reminderSmsDate) && !sameDayAsStored(reminderSmsDate, visit.reminderSmsDate);
     const reviewChanged = reviewSmsDate !== undefined && !sameMinute(reviewSmsDate, visit.reviewSmsDate);
 
     if (visit.reminderSmsStatus === 'sent' && reminderChanged) {
@@ -76,7 +88,7 @@ export const PATCH = withBusiness(
     const effectiveReminder = reminderSmsDate !== undefined ? reminderSmsDate : visit.reminderSmsDate;
     const effectiveReview = reviewSmsDate !== undefined ? reviewSmsDate : visit.reviewSmsDate;
     if (effectiveReminder && (reminderChanged || (visitDate && visit.reminderSmsStatus !== 'sent'))) {
-      if (effectiveReminder >= newVisitDate) return badRequest(REMINDER_BEFORE_VISIT);
+      if (reminderAfterVisitDay(effectiveReminder, newVisitDate)) return badRequest(REMINDER_BEFORE_VISIT);
     }
     if (effectiveReview && (reviewChanged || (visitDate && visit.reviewSmsStatus !== 'sent'))) {
       if (effectiveReview <= newVisitDate) return badRequest(REVIEW_AFTER_VISIT);

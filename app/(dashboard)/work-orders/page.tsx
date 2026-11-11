@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Pagination } from '@/components/pagination';
+import { ReviewRequestModal } from '@/components/review-request-modal';
 import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { itemsTotal, hasPrices } from '@/lib/work-orders/totals';
@@ -27,13 +29,15 @@ export default function WorkOrdersPage() {
   // false = kwota całkowita liczona automatycznie z pozycji; true = wpisana ręcznie (np. rabat)
   const [totalManual, setTotalManual] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [search, setSearch] = useState('');
+  // ?q= wypełnia wyszukiwarkę (link „Pokaż zlecenie” z dzwonka).
+  const initialQuery = useSearchParams()?.get('q') ?? '';
+  const [search, setSearch] = useState(initialQuery);
   const [customerSearch, setCustomerSearch] = useState('');
   // Nazwa wybranego klienta: może go nie być w wynikach wyszukiwania (np. przy edycji zlecenia).
   const [selectedCustomerName, setSelectedCustomerName] = useState('');
   const [showNewCustomerForm, setShowNewCustomerForm] = useState(false);
   const [newCustomer, setNewCustomer] = useState(emptyNewCustomer());
-  const [sendingSmsId, setSendingSmsId] = useState<string | null>(null);
+  const [reviewOrder, setReviewOrder] = useState<WorkOrder | null>(null);
   const [previewOrder, setPreviewOrder] = useState<WorkOrder | null>(null);
 
 
@@ -181,18 +185,10 @@ export default function WorkOrdersPage() {
     }
   }
 
-  async function handleSendReviewSms(workOrderId: string) {
-    setSendingSmsId(workOrderId);
-    try {
-      const res = await fetch(`/api/work-orders/${workOrderId}/send-sms`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to send SMS');
-      await fetchWorkOrders();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send SMS');
-    } finally {
-      setSendingSmsId(null);
-    }
+  // Prośba o opinię zawsze przechodzi przez okno potwierdzenia (pokazuje ostatnią prośbę klienta).
+  function handleSendReviewSms(workOrderId: string) {
+    const order = workOrders.find(o => o.id === workOrderId);
+    if (order) setReviewOrder(order);
   }
 
   async function handleStatusChange(id: string, status: string) {
@@ -248,7 +244,6 @@ export default function WorkOrdersPage() {
         onSearchChange={setSearch}
         filter={filter}
         onFilterChange={setFilter}
-        sendingSmsId={sendingSmsId}
         onPreview={setPreviewOrder}
         onEdit={openEdit}
         onDelete={handleDelete}
@@ -257,6 +252,17 @@ export default function WorkOrdersPage() {
       />
 
       {total > 0 && <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />}
+
+      {reviewOrder && (
+        <ReviewRequestModal
+          customerId={reviewOrder.customerId}
+          customerName={reviewOrder.customerName}
+          sendUrl={`/api/work-orders/${reviewOrder.id}/send-sms`}
+          onClose={() => setReviewOrder(null)}
+          onSent={fetchWorkOrders}
+            onFailed={fetchWorkOrders}
+        />
+      )}
 
       {previewOrder && (
         <OrderPreviewModal

@@ -4,7 +4,9 @@ import { SmsProviderFactory } from '@/lib/sms/providers/factory';
 import { withBusiness } from '@/lib/api/handler';
 import { sendVisitSmsSchema } from '@/lib/api/schemas/visits';
 import { renderSmsTemplate } from '@/lib/sms/render';
-import { claimVisitSms, logVisitSms, markVisitSmsFailed, sendSafely } from '@/lib/sms/delivery';
+import { recordReviewSms, visitSource } from '@/lib/customers/review-request';
+import { claimVisitReview, claimVisitSms, finishVisitReview, logVisitSms, markVisitSmsFailed, sendSafely } from '@/lib/sms/delivery';
+import { smsGatewayConfigured } from '@/lib/sms/configured';
 
 const bad = (error: string, status = 400) => NextResponse.json({ error }, { status });
 
@@ -23,12 +25,12 @@ export const POST = withBusiness(
     if (!visit.customer.smsConsent) return bad('Klient nie wyraził zgody na otrzymywanie SMS');
 
     if (smsType === 'reminder' && visit.reminderSmsStatus === 'sent') return bad('SMS z przypomnieniem już wysłany');
-    if (smsType === 'review' && visit.reviewSmsStatus === 'sent') return bad('SMS z prośbą o opinię już wysłany');
+    if (smsType === 'reminder' && new Date(visit.visitDate).getTime() <= Date.now()) return bad('Wizyta już się odbyła — przypomnienie nie ma sensu');
 
-    if (!business.smsConfig || !business.smsProvider) return bad('Dostawca SMS nie jest skonfigurowany');
+    if (!smsGatewayConfigured(business.smsProvider, business.smsConfig)) return bad('Dostawca SMS nie jest skonfigurowany');
 
     const template = smsType === 'reminder' ? business.reminderSmsTemplate : business.reviewSmsTemplate;
-    if (!template) return bad(`${smsType} SMS template not configured`);
+    if (!template) return bad(smsType === 'reminder' ? 'Brak szablonu przypomnienia SMS. Uzupełnij go w Ustawieniach.' : 'Brak szablonu prośby o opinię SMS. Uzupełnij go w Ustawieniach.');
 
     const message = renderSmsTemplate(template, {
       name: `${visit.customer.name} ${visit.customer.surname}`,
@@ -47,13 +49,19 @@ export const POST = withBusiness(
     }
 
     // Rezerwacja: chroni przed podwójną wysyłką (podwójne kliknięcie, równoległy cron).
-    if (!(await claimVisitSms(visit.id, smsType, 'notSent'))) return bad('Ten SMS został już wysłany', 409);
+    // Prośbę o opinię można wysłać ponownie (decyzja w oknie potwierdzenia); rezerwacja nadal jest atomowa.
+    const reviewPrev = { status: visit.reviewSmsStatus, sentAt: visit.reviewSmsSentAt };
+    const claimed = smsType === 'review'
+      ? await claimVisitReview(visit.id, reviewPrev)
+      : await claimVisitSms(visit.id, smsType, 'notSent');
+    if (!claimed) return bad('Ten SMS został już wysłany', 409);
 
     const smsResult = await sendSafely(smsProvider, visit.customer.phone, message);
 
     if (!smsResult.success) {
       console.error('SMS sending failed:', smsResult.error);
-      await markVisitSmsFailed(visit.id, smsType);
+      if (smsType === 'review') await finishVisitReview(visit.id, false, reviewPrev);
+      else await markVisitSmsFailed(visit.id, smsType);
       await logVisitSms({
         visitId: visit.id, smsType, phone: visit.customer.phone, message,
         status: 'failed', errorMessage: smsResult.error,
@@ -69,6 +77,9 @@ export const POST = withBusiness(
       visitId: visit.id, smsType, phone: visit.customer.phone, message,
       status: 'sent', messageId: smsResult.messageId, cost: smsResult.cost,
     });
+
+    if (smsType === 'review') await finishVisitReview(visit.id, true, reviewPrev);
+    if (smsType === 'review') await recordReviewSms(visit.customerId, visitSource(visit.visitDate));
 
     return NextResponse.json({ message: `${smsType} SMS sent successfully`, smsResult });
   },

@@ -45,14 +45,14 @@ export function InventorySelect({ value, onChange, onSelectItem, items, placehol
   return (
     <div ref={ref} className="relative flex-1 min-w-0">
       <button
-        type="button"
-        onClick={() => { setOpen(o => !o); setSearch(''); }}
-        className="w-full border border-gray-200 rounded px-2 py-1 text-xs text-left flex items-center justify-between bg-white gap-1"
-      >
-        <span className={`truncate ${selected ? 'text-gray-900' : 'text-gray-400'}`}>
-          {selected ? formatInvLabel(selected) : placeholder}
-        </span>
-        <span className="text-gray-400 shrink-0">▾</span>
+          type="button"
+          onClick={() => { setOpen(o => !o); setSearch(''); }}
+          className="w-full border border-gray-200 rounded px-2 h-9 text-sm text-left flex items-center justify-between bg-white gap-1"
+        >
+          <span className={`truncate ${selected ? 'text-gray-900' : 'text-gray-400'}`}>
+            {selected ? formatInvLabel(selected) : placeholder}
+          </span>
+          <span className="text-gray-400 shrink-0">▾</span>
       </button>
       {open && (
         <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-gray-200 rounded shadow-lg min-w-[280px]">

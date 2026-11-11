@@ -7,6 +7,14 @@ export class ValidationError extends Error {
   }
 }
 
+/** Zasób nie istnieje (albo nie należy do salonu): odpowiedź 404. */
+export class NotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NotFoundError';
+  }
+}
+
 interface NumberRule {
   label: string;
   min?: number;

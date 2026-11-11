@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { SmsProviderFactory } from '@/lib/sms/providers/factory';
-import { sendSafely } from '@/lib/sms/delivery';
+import type { ReviewPrev } from '@/lib/sms/delivery';
+import { claimOrderReview, finishOrderReview, logWorkOrderSms, sendSafely } from '@/lib/sms/delivery';
 import { withBusiness } from '@/lib/api/handler';
+import { recordReviewSms, orderSource } from '@/lib/customers/review-request';
 import { renderSmsTemplate } from '@/lib/sms/render';
+import { smsGatewayConfigured } from '@/lib/sms/configured';
 
 const bad = (error: string, status = 400) => NextResponse.json({ error }, { status });
 
@@ -20,7 +23,7 @@ export const POST = withBusiness(
 
     if (!workOrder.customer.smsConsent) return bad('Klient nie wyraził zgody na otrzymywanie SMS');
 
-    if (!business.smsConfig || !business.smsProvider) return bad('Dostawca SMS nie jest skonfigurowany');
+    if (!smsGatewayConfigured(business.smsProvider, business.smsConfig)) return bad('Dostawca SMS nie jest skonfigurowany');
 
     const template = business.reviewSmsTemplate;
     if (!template) return bad('Szablon SMS z prośbą o opinię nie jest skonfigurowany');
@@ -41,21 +44,28 @@ export const POST = withBusiness(
     }
 
     // Rezerwacja przed wysyłką: podwójne kliknięcie nie wyśle drugiego SMS.
-    const claim = await db.workOrder.updateMany({
-      where: { id: workOrderId, businessId: business.id, reviewSmsStatus: { not: 'sent' } },
-      data: { reviewSmsStatus: 'sent', reviewSmsSentAt: new Date() },
-    });
-    if (claim.count !== 1) return bad('Ten SMS został już wysłany', 409);
+    // Ponowna wysyłka po 'sent' jest dozwolona (decyzja w oknie potwierdzenia); rezerwacja nadal atomowa.
+    const prev = { status: workOrder.reviewSmsStatus as ReviewPrev['status'], sentAt: workOrder.reviewSmsSentAt };
+    if (!(await claimOrderReview(workOrderId, business.id, prev))) return bad('Ten SMS został już wysłany', 409);
 
     const smsResult = await sendSafely(smsProvider, workOrder.customer.phone, message);
 
     if (!smsResult.success) {
-      await db.workOrder.update({
-        where: { id: workOrderId },
-        data: { reviewSmsStatus: 'failed', reviewSmsSentAt: null },
+      await finishOrderReview(workOrderId, false, prev);
+      await logWorkOrderSms({
+        workOrderId, phone: workOrder.customer.phone, message,
+        status: 'failed', errorMessage: smsResult.error || 'Dostawca SMS zwrócił błąd',
       });
       return bad(smsResult.error || 'Dostawca SMS zwrócił błąd', 500);
     }
+
+    await logWorkOrderSms({
+      workOrderId, phone: workOrder.customer.phone, message,
+      status: 'sent', messageId: smsResult.messageId, cost: smsResult.cost,
+    });
+
+    await finishOrderReview(workOrderId, true, prev);
+    await recordReviewSms(workOrder.customerId, orderSource(workOrder.orderNumber));
 
     return NextResponse.json({ message: 'Review SMS sent successfully', smsResult });
   },

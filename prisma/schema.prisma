@@ -16,6 +16,8 @@ enum SmsStatus {
   pending
   sent
   failed
+  // Przejściowy stan ręcznej wysyłki prośby o opinię (rezerwacja); po 2 minutach uznawany za porzucony.
+  sending
 }
 
 enum SmsType {
@@ -23,24 +25,36 @@ enum SmsType {
   review
 }
 
+// Rodzaj ruchu magazynowego (dziennik stanów, tylko dopisywany).
+enum StockMovementType {
+  INITIAL // stan początkowy (start historii albo dodanie towaru)
+  DELIVERY // dostawa
+  ORDER_OUT // pobranie na zlecenie
+  ORDER_RETURN // zwrot ze zlecenia (edycja, usunięcie zlecenia lub klienta)
+  CORRECTION // ręczna korekta ilości
+  STOCKTAKE // różnica z inwentaryzacji
+  REMOVAL // usunięcie towaru (zdjęcie reszty stanu)
+}
+
 // ========================================
 // Users Table
 // ========================================
 model User {
-  id           String    @id @default(uuid()) @db.Uuid
-  email        String    @unique @db.VarChar(255)
-  passwordHash String    @map("password_hash") @db.VarChar(255)
-  name         String?   @db.VarChar(255)
-  role         String    @default("user") @db.VarChar(20)
+  id                 String    @id @default(uuid()) @db.Uuid
+  email              String    @unique @db.VarChar(255)
+  passwordHash       String    @map("password_hash") @db.VarChar(255)
+  name               String?   @db.VarChar(255)
+  role               String    @default("user") @db.VarChar(20)
   // Koniec dostępu (okres próbny / opłacony). null = bez limitu (stare konta, admin).
-  accessUntil  DateTime? @map("access_until") @db.Timestamp(6)
+  accessUntil        DateTime? @map("access_until") @db.Timestamp(6)
   // Wersja Windows: ile komputerów konto może aktywować.
-  windowsDeviceLimit Int  @default(1) @map("windows_device_limit")
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  windowsDeviceLimit Int       @default(1) @map("windows_device_limit")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  business Business?
+  business       Business?
   licenseDevices LicenseDevice[]
+  stockMovements StockMovement[]
 
   @@map("users")
 }
@@ -49,27 +63,39 @@ model User {
 // Businesses Table
 // ========================================
 model Business {
-  id                   String    @id @default(uuid()) @db.Uuid
-  userId               String    @unique @map("user_id") @db.Uuid
-  name                 String    @db.VarChar(255)
-  phone                String?   @db.VarChar(20)
-  googleReviewUrl      String    @map("google_review_url") @db.Text
+  id              String  @id @default(uuid()) @db.Uuid
+  userId          String  @unique @map("user_id") @db.Uuid
+  name            String  @db.VarChar(255)
+  phone           String? @db.VarChar(20)
+  googleReviewUrl String  @map("google_review_url") @db.Text
 
   // SMS Provider Configuration
-  smsProvider          String?   @default("smsapi") @map("sms_provider") @db.VarChar(50)
-  smsConfig            Json?     @map("sms_config")
+  smsProvider String? @default("smsapi") @map("sms_provider") @db.VarChar(50)
+  smsConfig   Json?   @map("sms_config")
 
   // SMS Templates
-  reminderSmsTemplate  String?   @default("Cześć {name}! Przypominamy o wizycie w dniu {date}. Pozdrawiamy, {staff}") @map("reminder_sms_template") @db.Text
-  reviewSmsTemplate    String?   @default("Cześć {name}! Dziękujemy za wizytę. Zostaw nam swoją opinię: {link} - {staff}") @map("review_sms_template") @db.Text
+  reminderSmsTemplate String? @default("Cześć {name}! Przypominamy o wizycie w dniu {date}. Pozdrawiamy, {staff}") @map("reminder_sms_template") @db.Text
+  reviewSmsTemplate   String? @default("Cześć {name}! Dziękujemy za wizytę. Zostaw nam swoją opinię: {link} - {staff}") @map("review_sms_template") @db.Text
 
-  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  // Okno wysyłki przypomnień o wizycie: minuty od północy (czas salonu), domyślnie 09:00-17:00.
+  reminderWindowStart Int @default(540) @map("reminder_window_start")
+  reminderWindowEnd   Int @default(1020) @map("reminder_window_end")
+  // Automatyczna wysyłka przypomnień (wyłączona = salon wysyła je ręcznie przyciskiem).
+  autoReminders       Boolean @default(false) @map("auto_reminders")
 
-  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  customers            Customer[]
-  workOrders           WorkOrder[]
-  inventoryItems       InventoryItem[]
+  // Od tej chwili historia ruchów magazynowych jest kompletna (null = jeszcze nie rozpoczęta).
+  stockHistoryStart DateTime? @map("stock_history_start") @db.Timestamp(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customers      Customer[]
+  workOrders     WorkOrder[]
+  inventoryItems InventoryItem[]
+  stockCounts    StockCount[]
+  stockMovements StockMovement[]
+  smsCampaigns   SmsCampaign[]
 
   @@map("businesses")
 }
@@ -78,19 +104,23 @@ model Business {
 // Customers Table
 // ========================================
 model Customer {
-  id         String    @id @default(uuid()) @db.Uuid
-  businessId String    @map("business_id") @db.Uuid
-  name       String    @db.VarChar(255)
-  surname    String    @db.VarChar(255)
-  phone      String    @db.VarChar(20)
-  email      String?   @db.VarChar(255)
-  smsConsent Boolean   @default(true) @map("sms_consent")
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  id                  String    @id @default(uuid()) @db.Uuid
+  businessId          String    @map("business_id") @db.Uuid
+  name                String    @db.VarChar(255)
+  surname             String    @db.VarChar(255)
+  phone               String    @db.VarChar(20)
+  email               String?   @db.VarChar(255)
+  smsConsent          Boolean   @default(true) @map("sms_consent")
+  // Ostatnia udana prośba o opinię (wizyta albo zlecenie) i jej źródło, np. „zlecenie ZL/2026/001”.
+  lastReviewSmsAt     DateTime? @map("last_review_sms_at") @db.Timestamp(6)
+  lastReviewSmsSource String?   @map("last_review_sms_source") @db.VarChar(100)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  visits     Visit[]
-  workOrders WorkOrder[]
+  business              Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  visits                Visit[]
+  workOrders            WorkOrder[]
+  smsCampaignRecipients SmsCampaignRecipient[]
 
   @@map("customers")
 }
@@ -99,27 +129,27 @@ model Customer {
 // Visits Table
 // ========================================
 model Visit {
-  id                  String    @id @default(uuid()) @db.Uuid
-  customerId          String    @map("customer_id") @db.Uuid
-  visitDate           DateTime  @map("visit_date") @db.Timestamp(6)
-  visitType           String?   @map("visit_type") @db.VarChar(100)
-  notes               String?   @db.Text
+  id         String   @id @default(uuid()) @db.Uuid
+  customerId String   @map("customer_id") @db.Uuid
+  visitDate  DateTime @map("visit_date") @db.Timestamp(6)
+  visitType  String?  @map("visit_type") @db.VarChar(100)
+  notes      String?  @db.Text
 
   // Reminder SMS (before visit)
-  reminderSmsDate     DateTime?  @map("reminder_sms_date") @db.Timestamp(6)
-  reminderSmsStatus   SmsStatus? @default(pending) @map("reminder_sms_status")
-  reminderSmsSentAt   DateTime?  @map("reminder_sms_sent_at") @db.Timestamp(6)
+  reminderSmsDate   DateTime?  @map("reminder_sms_date") @db.Timestamp(6)
+  reminderSmsStatus SmsStatus? @default(pending) @map("reminder_sms_status")
+  reminderSmsSentAt DateTime?  @map("reminder_sms_sent_at") @db.Timestamp(6)
 
   // Review SMS (after visit)
-  reviewSmsDate       DateTime?  @map("review_sms_date") @db.Timestamp(6)
-  reviewSmsStatus     SmsStatus? @default(pending) @map("review_sms_status")
-  reviewSmsSentAt     DateTime?  @map("review_sms_sent_at") @db.Timestamp(6)
+  reviewSmsDate   DateTime?  @map("review_sms_date") @db.Timestamp(6)
+  reviewSmsStatus SmsStatus? @default(pending) @map("review_sms_status")
+  reviewSmsSentAt DateTime?  @map("review_sms_sent_at") @db.Timestamp(6)
 
-  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  customer            Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  smsLogs             SmsLog[]
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  smsLogs  SmsLog[]
 
   @@map("visits")
 }
@@ -128,24 +158,26 @@ model Visit {
 // Work Orders Table
 // ========================================
 model WorkOrder {
-  id          String          @id @default(uuid()) @db.Uuid
-  businessId  String          @map("business_id") @db.Uuid
-  customerId  String          @map("customer_id") @db.Uuid
-  orderNumber String          @map("order_number") @db.VarChar(50)
-  receivedAt  DateTime        @map("received_at") @db.Timestamp(6)
-  pickupDate  DateTime?       @map("pickup_date") @db.Timestamp(6)
-  status      String          @default("pending") @db.VarChar(50)
-  totalAmount Decimal?        @map("total_amount") @db.Decimal(10,2)
-  deposit     Decimal?        @db.Decimal(10,2)
-  notes              String?         @db.Text
-  reviewSmsStatus    String          @default("pending") @map("review_sms_status") @db.VarChar(20)
-  reviewSmsSentAt    DateTime?       @map("review_sms_sent_at") @db.Timestamp(6)
-  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt          DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  id              String    @id @default(uuid()) @db.Uuid
+  businessId      String    @map("business_id") @db.Uuid
+  customerId      String    @map("customer_id") @db.Uuid
+  orderNumber     String    @map("order_number") @db.VarChar(50)
+  receivedAt      DateTime  @map("received_at") @db.Timestamp(6)
+  pickupDate      DateTime? @map("pickup_date") @db.Timestamp(6)
+  status          String    @default("pending") @db.VarChar(50)
+  totalAmount     Decimal?  @map("total_amount") @db.Decimal(10, 2)
+  deposit         Decimal?  @db.Decimal(10, 2)
+  notes           String?   @db.Text
+  reviewSmsStatus String    @default("pending") @map("review_sms_status") @db.VarChar(20)
+  reviewSmsSentAt DateTime? @map("review_sms_sent_at") @db.Timestamp(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  business    Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  items       WorkOrderItem[]
+  business       Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  items          WorkOrderItem[]
+  stockMovements StockMovement[]
+  smsLogs        SmsLog[]
 
   @@map("work_orders")
 }
@@ -154,48 +186,55 @@ model WorkOrder {
 // Work Order Items Table
 // ========================================
 model WorkOrderItem {
-  id          String    @id @default(uuid()) @db.Uuid
-  workOrderId String    @map("work_order_id") @db.Uuid
-  type        String    @db.VarChar(50)
+  id          String @id @default(uuid()) @db.Uuid
+  workOrderId String @map("work_order_id") @db.Uuid
+  type        String @db.VarChar(50)
 
   // Recepta - Oko Prawe (OP)
-  opSph       Decimal?  @map("op_sph") @db.Decimal(5,2)
-  opCyl       Decimal?  @map("op_cyl") @db.Decimal(5,2)
-  opAxis      Int?      @map("op_axis")
-  opAdd       Decimal?  @map("op_add") @db.Decimal(5,2)
-  opPd        Decimal?  @map("op_pd") @db.Decimal(4,1)
+  opSph  Decimal? @map("op_sph") @db.Decimal(5, 2)
+  opCyl  Decimal? @map("op_cyl") @db.Decimal(5, 2)
+  opAxis Int?     @map("op_axis")
+  opAdd  Decimal? @map("op_add") @db.Decimal(5, 2)
+  opPd   Decimal? @map("op_pd") @db.Decimal(4, 1)
 
   // Recepta - Oko Lewe (OL)
-  olSph       Decimal?  @map("ol_sph") @db.Decimal(5,2)
-  olCyl       Decimal?  @map("ol_cyl") @db.Decimal(5,2)
-  olAxis      Int?      @map("ol_axis")
-  olAdd       Decimal?  @map("ol_add") @db.Decimal(5,2)
-  olPd        Decimal?  @map("ol_pd") @db.Decimal(4,1)
+  olSph  Decimal? @map("ol_sph") @db.Decimal(5, 2)
+  olCyl  Decimal? @map("ol_cyl") @db.Decimal(5, 2)
+  olAxis Int?     @map("ol_axis")
+  olAdd  Decimal? @map("ol_add") @db.Decimal(5, 2)
+  olPd   Decimal? @map("ol_pd") @db.Decimal(4, 1)
 
   // Oprawka
-  frameModel  String?   @map("frame_model") @db.VarChar(255)
-  ownFrame    Boolean   @default(false) @map("own_frame")
+  frameModel String? @map("frame_model") @db.VarChar(255)
+  ownFrame   Boolean @default(false) @map("own_frame")
 
-  // Szkła
-  lensType    String?   @map("lens_type") @db.VarChar(100)
-  framePrice  Decimal?  @map("frame_price") @db.Decimal(10,2)
-  lensPrice   Decimal?  @map("lens_price") @db.Decimal(10,2)
+  // Szkła. lensType to pole historyczne (jedna nazwa dla obu oczu). lensPrice = opLensPrice + olLensPrice
+  // (liczy serwer), żeby sumy i listy działały jak dotąd.
+  lensType   String?  @map("lens_type") @db.VarChar(100)
+  framePrice Decimal? @map("frame_price") @db.Decimal(10, 2)
+  lensPrice  Decimal? @map("lens_price") @db.Decimal(10, 2)
+
+  // Szkła osobno dla każdego oka
+  opLensName  String?  @map("op_lens_name") @db.VarChar(255)
+  olLensName  String?  @map("ol_lens_name") @db.VarChar(255)
+  opLensPrice Decimal? @map("op_lens_price") @db.Decimal(10, 2)
+  olLensPrice Decimal? @map("ol_lens_price") @db.Decimal(10, 2)
 
   // Magazyn (per oko + oprawka)
-  inventoryItemIdOp    String?        @map("inventory_item_id_op") @db.Uuid
-  inventoryItemIdOl    String?        @map("inventory_item_id_ol") @db.Uuid
-  inventoryItemIdFrame String?        @map("inventory_item_id_frame") @db.Uuid
+  inventoryItemIdOp    String? @map("inventory_item_id_op") @db.Uuid
+  inventoryItemIdOl    String? @map("inventory_item_id_ol") @db.Uuid
+  inventoryItemIdFrame String? @map("inventory_item_id_frame") @db.Uuid
 
   // Do zamówienia u dostawcy (osobno dla szkła OP, OL i oprawki). Zaznaczony element
   // może zdjąć z magazynu towar, którego brak — stan schodzi poniżej zera do czasu dostawy.
-  opOrdered            Boolean        @default(false) @map("op_ordered")
-  olOrdered            Boolean        @default(false) @map("ol_ordered")
-  frameOrdered         Boolean        @default(false) @map("frame_ordered")
-  inventoryItemOp      InventoryItem? @relation("InventoryOp", fields: [inventoryItemIdOp], references: [id], onDelete: SetNull)
-  inventoryItemOl      InventoryItem? @relation("InventoryOl", fields: [inventoryItemIdOl], references: [id], onDelete: SetNull)
-  inventoryItemFrame   InventoryItem? @relation("InventoryFrame", fields: [inventoryItemIdFrame], references: [id], onDelete: SetNull)
+  opOrdered          Boolean        @default(false) @map("op_ordered")
+  olOrdered          Boolean        @default(false) @map("ol_ordered")
+  frameOrdered       Boolean        @default(false) @map("frame_ordered")
+  inventoryItemOp    InventoryItem? @relation("InventoryOp", fields: [inventoryItemIdOp], references: [id], onDelete: SetNull)
+  inventoryItemOl    InventoryItem? @relation("InventoryOl", fields: [inventoryItemIdOl], references: [id], onDelete: SetNull)
+  inventoryItemFrame InventoryItem? @relation("InventoryFrame", fields: [inventoryItemIdFrame], references: [id], onDelete: SetNull)
 
-  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
 
   @@map("work_order_items")
 }
@@ -204,45 +243,140 @@ model WorkOrderItem {
 // Inventory Items Table
 // ========================================
 model InventoryItem {
-  id         String    @id @default(uuid()) @db.Uuid
-  businessId String    @map("business_id") @db.Uuid
-  name       String    @db.VarChar(255)
-  quantity   Int       @default(0)
-  unit       String    @default("szt.") @db.VarChar(20)
-  category   String?   @db.VarChar(100)
-  sph        Decimal?  @db.Decimal(5,2)
-  cyl        Decimal?  @db.Decimal(5,2)
-  diameter   Decimal?  @db.Decimal(5,1)
-  price      Decimal?  @db.Decimal(10,2)
-  notes      String?   @db.Text
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  id            String    @id @default(uuid()) @db.Uuid
+  businessId    String    @map("business_id") @db.Uuid
+  name          String    @db.VarChar(255)
+  quantity      Int       @default(0)
+  unit          String    @default("szt.") @db.VarChar(20)
+  category      String?   @db.VarChar(100)
+  sph           Decimal?  @db.Decimal(5, 2)
+  cyl           Decimal?  @db.Decimal(5, 2)
+  diameter      Decimal?  @db.Decimal(5, 1)
+  price         Decimal?  @db.Decimal(10, 2)
+  purchasePrice Decimal?  @map("purchase_price") @db.Decimal(10, 2)
+  notes         String?   @db.Text
+  // Usunięcie miękkie: towar znika z list, ale wiersz i historia ruchów zostają.
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamp(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  business            Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  workOrderItemsOp    WorkOrderItem[] @relation("InventoryOp")
-  workOrderItemsOl    WorkOrderItem[] @relation("InventoryOl")
-  workOrderItemsFrame WorkOrderItem[] @relation("InventoryFrame")
+  business            Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  stockMovements      StockMovement[]
+  stockCountLines     StockCountLine[]
+  workOrderItemsOp    WorkOrderItem[]  @relation("InventoryOp")
+  workOrderItemsOl    WorkOrderItem[]  @relation("InventoryOl")
+  workOrderItemsFrame WorkOrderItem[]  @relation("InventoryFrame")
 
   @@map("inventory_items")
+}
+
+// ========================================
+// Stocktaking (inwentaryzacja / spis z natury)
+// ========================================
+model StockCount {
+  id         String    @id @default(uuid()) @db.Uuid
+  businessId String    @map("business_id") @db.Uuid
+  countDate  DateTime  @map("count_date") @db.Date
+  status     String    @default("open") @db.VarChar(10) // open | closed
+  notes      String?   @db.Text
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  closedAt   DateTime? @map("closed_at") @db.Timestamp(6)
+  // Chwila, na którą arkusz pokazuje stany (zamknięty spis): min(zamknięcie, koniec dnia spisu).
+  asOf       DateTime? @map("as_of") @db.Timestamp(6)
+  // Ostatnia synchronizacja otwartego spisu z dziennikiem: największy seq ruchów salonu i chwila.
+  // Gdy seq się nie zmienił, ponowna synchronizacja nic nie zmieni i jest pomijana.
+  syncedSeq  BigInt?   @map("synced_seq")
+  syncedAt   DateTime? @map("synced_at") @db.Timestamp(6)
+
+  business       Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  lines          StockCountLine[]
+  stockMovements StockMovement[]
+
+  @@index([businessId, status])
+  @@map("stock_counts")
+}
+
+model StockCountLine {
+  id               String    @id @default(uuid()) @db.Uuid
+  stockCountId     String    @map("stock_count_id") @db.Uuid
+  inventoryItemId  String?   @map("inventory_item_id") @db.Uuid
+  name             String    @db.VarChar(255)
+  unit             String    @db.VarChar(20)
+  category         String?   @db.VarChar(100)
+  purchasePrice    Decimal?  @map("purchase_price") @db.Decimal(10, 2)
+  salePrice        Decimal?  @map("sale_price") @db.Decimal(10, 2)
+  countedQty       Int?      @map("counted_qty")
+  systemQtyAtCount Int?      @map("system_qty_at_count")
+  countedAt        DateTime? @map("counted_at") @db.Timestamp(6)
+  appliedDiff      Int?      @map("applied_diff")
+  // true = użytkownik wpisał wartość (także równą stanowi z programu). Pozycja nieruszona idzie za dziennikiem.
+  touched          Boolean   @default(false)
+
+  stockCount    StockCount     @relation(fields: [stockCountId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+
+  @@unique([stockCountId, inventoryItemId])
+  @@index([stockCountId])
+  @@map("stock_count_lines")
+}
+
+// ========================================
+// Stock movements (dziennik ruchów magazynowych, tylko dopisywany)
+// Niezmiennik: InventoryItem.quantity == suma delta wszystkich ruchów towaru.
+// ========================================
+model StockMovement {
+  id              String            @id @default(uuid()) @db.Uuid
+  // Kolejność zapisu (rosnąca). createdAt bywa równy w jednej transakcji, seq rozstrzyga.
+  seq             BigInt            @unique @default(autoincrement())
+  businessId      String            @map("business_id") @db.Uuid
+  inventoryItemId String            @map("inventory_item_id") @db.Uuid
+  type            StockMovementType
+  delta           Int
+  qtyAfter        Int               @map("qty_after")
+  // Kiedy zdarzenie zaszło naprawdę (dostawa może być wsteczna, korekta ze spisu na chwilę liczenia).
+  occurredAt      DateTime          @map("occurred_at") @db.Timestamp(6)
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamp(6)
+  userId          String?           @map("user_id") @db.Uuid
+  workOrderId     String?           @map("work_order_id") @db.Uuid
+  orderNumber     String?           @map("order_number") @db.VarChar(50)
+  stockCountId    String?           @map("stock_count_id") @db.Uuid
+  note            String?           @db.VarChar(500)
+
+  business      Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  user          User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  workOrder     WorkOrder?    @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  stockCount    StockCount?   @relation(fields: [stockCountId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, occurredAt])
+  @@index([businessId, seq])
+  @@index([inventoryItemId, occurredAt])
+  @@map("stock_movements")
 }
 
 // ========================================
 // SMS Logs Table
 // ========================================
 model SmsLog {
-  id               String    @id @default(uuid()) @db.Uuid
-  visitId          String    @map("visit_id") @db.Uuid
-  smsType          SmsType   @map("sms_type")
-  phone            String    @db.VarChar(20)
-  message          String    @db.Text
-  status           String    @db.VarChar(20)
-  errorMessage     String?   @map("error_message") @db.Text
-  smsapiMessageId  String?   @map("smsapi_message_id") @db.VarChar(255)
-  cost             Int?
-  sentAt           DateTime  @default(now()) @map("sent_at") @db.Timestamp(6)
+  id              String    @id @default(uuid()) @db.Uuid
+  visitId         String?   @map("visit_id") @db.Uuid
+  workOrderId     String?   @map("work_order_id") @db.Uuid
+  smsType         SmsType   @map("sms_type")
+  phone           String    @db.VarChar(20)
+  message         String    @db.Text
+  status          String    @db.VarChar(20)
+  errorMessage    String?   @map("error_message") @db.Text
+  smsapiMessageId String?   @map("smsapi_message_id") @db.VarChar(255)
+  cost            Int?
+  sentAt          DateTime  @default(now()) @map("sent_at") @db.Timestamp(6)
+  // Powiadomienia (dzwonek): kiedy salon oznaczył nieudany SMS jako przeczytany.
+  acknowledgedAt  DateTime? @map("acknowledged_at") @db.Timestamp(6)
 
-  visit            Visit     @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  visit     Visit?     @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  workOrder WorkOrder? @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
 
+  @@index([status, sentAt])
+  @@index([workOrderId])
   @@map("sms_logs")
 }
 
@@ -257,8 +391,63 @@ model LicenseDevice {
   machineName String?  @map("machine_name") @db.VarChar(255)
   activatedAt DateTime @default(now()) @map("activated_at") @db.Timestamp(6)
 
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, machineHash])
   @@map("license_devices")
+}
+
+// ========================================
+// Kampanie SMS (wysyłki grupowe w tle)
+// ========================================
+model SmsCampaign {
+  id                     String    @id @default(uuid()) @db.Uuid
+  businessId             String    @map("business_id") @db.Uuid
+  // Szablon z {name} i {staff}
+  message                String    @db.Text
+  // queued | sending | done | cancelled
+  status                 String    @default("queued") @db.VarChar(20)
+  total                  Int       @default(0)
+  sent                   Int       @default(0)
+  failed                 Int       @default(0)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  startedAt              DateTime? @map("started_at") @db.Timestamp(6)
+  finishedAt             DateTime? @map("finished_at") @db.Timestamp(6)
+  createdByUserId        String?   @map("created_by_user_id") @db.Uuid
+  idempotencyKey         String?   @map("idempotency_key") @db.VarChar(64)
+  // Dzwonek: kiedy salon oznaczył nieudane SMS-y kampanii jako przeczytane
+  failuresAcknowledgedAt DateTime? @map("failures_acknowledged_at") @db.Timestamp(6)
+
+  business   Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  recipients SmsCampaignRecipient[]
+
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, createdAt])
+  @@index([status])
+  @@map("sms_campaigns")
+}
+
+model SmsCampaignRecipient {
+  id                String    @id @default(uuid()) @db.Uuid
+  campaignId        String    @map("campaign_id") @db.Uuid
+  customerId        String?   @map("customer_id") @db.Uuid
+  // Dane z chwili utworzenia kampanii (klient może zostać usunięty)
+  customerName      String    @map("customer_name") @db.VarChar(512)
+  phone             String    @db.VarChar(20)
+  renderedMessage   String?   @map("rendered_message") @db.Text
+  // pending | sending | sent | failed | cancelled
+  status            String    @default("pending") @db.VarChar(20)
+  claimedAt         DateTime? @map("claimed_at") @db.Timestamp(6)
+  sentAt            DateTime? @map("sent_at") @db.Timestamp(6)
+  errorMessage      String?   @map("error_message") @db.Text
+  reasonCode        String?   @map("reason_code") @db.VarChar(32)
+  providerMessageId String?   @map("provider_message_id") @db.VarChar(255)
+  cost              Float?
+
+  campaign SmsCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  customer Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@unique([campaignId, customerId])
+  @@index([campaignId, status])
+  @@map("sms_campaign_recipients")
 }

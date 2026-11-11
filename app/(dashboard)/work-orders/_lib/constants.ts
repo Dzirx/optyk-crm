@@ -1,5 +1,5 @@
 import type { TranslationKey } from '@/lib/i18n/translations';
-import type { OrderedKey, PrescriptionField } from './types';
+import type { OrderedKey, PrescriptionField, Source } from './types';
 
 export const ORDERED_KEYS: OrderedKey[] = ['opOrdered', 'olOrdered', 'frameOrdered'];
 
@@ -35,3 +35,11 @@ export const FIELD_OPTIONS: Record<PrescriptionField, { value: string; label: st
   opSph: SPH_OPTIONS, opCyl: CYL_OPTIONS, opAxis: null, opAdd: ADD_OPTIONS, opPd: PD_OPTIONS,
   olSph: SPH_OPTIONS, olCyl: CYL_OPTIONS, olAxis: null, olAdd: ADD_OPTIONS, olPd: PD_OPTIONS,
 };
+
+export const SOURCE_OPTIONS: { value: Source; labelKey: TranslationKey }[] = [
+  { value: 'stock', labelKey: 'sourceStock' },
+  { value: 'order', labelKey: 'sourceOrder' },
+  { value: 'manual', labelKey: 'sourceManual' },
+  { value: 'own', labelKey: 'sourceOwn' },
+  { value: 'none', labelKey: 'sourceNone' },
+];

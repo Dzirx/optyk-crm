@@ -11,11 +11,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 export ROOT_USER_EMAIL=root@test.local ROOT_USER_PASSWORD=Root-test-123
 export BASE="http://127.0.0.1:${E2E_PORT}"
+# Dziennik wywołań fałszywej bramki SMS (fake-sms.cjs): kampanie liczą wysyłki do numerów.
 
 SUITES=("$@")
-[ ${#SUITES[@]} -eq 0 ] && SUITES=(idor fixes trial license api pagination)
+[ ${#SUITES[@]} -eq 0 ] && SUITES=(idor fixes trial license api notifications pagination stock-count stock-count-asof movements review-fixes campaigns invariants review-request sms-failure-reason scheduled-sms)
 
 e2e_init
+export FAKE_SMS_LOG="$WORK_DIR/sms-calls.log"
+: > "$FAKE_SMS_LOG"
 db_up
 db_schema_and_seed
 
@@ -34,6 +37,7 @@ console.log("export LICENSE_PUBLIC_KEY_B64");
 log "Start serwera next dev na porcie $E2E_PORT"
 start_server "$WORK_DIR/server.log" env \
   DATABASE_URL="$DATABASE_URL" \
+  NEXT_DIST_DIR=.next-e2e \
   AUTH_SECRET="e2e-secret-e2e-secret-e2e-secret-0123456789" \
   AUTH_TRUST_HOST=true \
   CRON_SECRET=cron-test \
@@ -41,6 +45,7 @@ start_server "$WORK_DIR/server.log" env \
   CONTACT_PHONE="500 600 700" \
   LICENSE_PRIVATE_KEY_B64="$LICENSE_PRIVATE_KEY_B64" \
   TZ=UTC \
+  NODE_OPTIONS="--require $REPO_ROOT/tests/e2e/fake-sms.cjs" \
   bash -c "cd '$REPO_ROOT' && exec node_modules/.bin/next dev -p $E2E_PORT -H 127.0.0.1"
 
 declare -A RESULT

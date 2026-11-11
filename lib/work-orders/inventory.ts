@@ -1,13 +1,9 @@
 // Zmiany stanu magazynu wywołane przez pozycje zleceń.
 
 import type { Prisma } from '@prisma/client';
+import { OutOfStockError, changeStock } from '@/lib/stock/movements';
 
-export class OutOfStockError extends Error {
-  constructor(public readonly itemName: string) {
-    super(`Brak towaru na stanie: ${itemName}. Jeśli towar trzeba zamówić u dostawcy, zaznacz „Do zamówienia” przy tym elemencie.`);
-    this.name = 'OutOfStockError';
-  }
-}
+export { OutOfStockError };
 
 type InventoryLinks = {
   inventoryItemIdOp?: string | null;
@@ -35,42 +31,83 @@ export function addLinks(adjustments: Record<string, number>, item: InventoryLin
   }
 }
 
+export interface OrderStockContext {
+  businessId: string;
+  workOrderId: string;
+  orderNumber: string;
+  userId?: string | null;
+}
+
 /**
- * Zapisuje zmiany stanu w transakcji. Pobranie towaru, którego nie ma na stanie,
+ * Zapisuje zmiany stanu w transakcji (pod blokadą magazynu) jako ruchy ORDER_OUT (pobranie)
+ * i ORDER_RETURN (zwrot) przypisane do zlecenia. Pobranie towaru, którego nie ma na stanie,
  * rzuca OutOfStockError i wycofuje całą transakcję — stan nie spada poniżej zera.
  *
  * allowNegativeIds (towary oznaczone „do zamówienia”): stan może zejść poniżej zera.
  * Ujemny stan = sztuki zamówione u dostawcy, które czekają na dostawę.
+ * Towary usunięte (deletedAt) są pomijane: ich stan zostaje 0.
  */
 export async function applyAdjustments(
   tx: Prisma.TransactionClient,
+  ctx: OrderStockContext,
   adjustments: Record<string, number>,
   allowNegativeIds: Set<string> = new Set(),
 ): Promise<void> {
-  for (const [id, delta] of Object.entries(adjustments)) {
-    if (delta === 0) continue;
-    if (delta > 0 || allowNegativeIds.has(id)) {
-      await tx.inventoryItem.update({ where: { id }, data: { quantity: { increment: delta } } });
-      continue;
-    }
-    const res = await tx.inventoryItem.updateMany({
-      where: { id, quantity: { gte: -delta } },
-      data: { quantity: { increment: delta } },
+  // Usunięty towar zostaje na 0: nie zmieniamy jego stanu i nie piszemy ruchu (np. zwrot po edycji zlecenia).
+  const ids = Object.keys(adjustments);
+  const deleted = new Set(
+    ids.length === 0
+      ? []
+      : (
+          await tx.inventoryItem.findMany({
+            where: { id: { in: ids }, businessId: ctx.businessId, deletedAt: { not: null } },
+            select: { id: true },
+          })
+        ).map((i) => i.id),
+  );
+  for (const [itemId, delta] of Object.entries(adjustments)) {
+    if (delta === 0 || deleted.has(itemId)) continue;
+    await changeStock(tx, {
+      businessId: ctx.businessId,
+      itemId,
+      delta,
+      type: delta < 0 ? 'ORDER_OUT' : 'ORDER_RETURN',
+      workOrderId: ctx.workOrderId,
+      orderNumber: ctx.orderNumber,
+      userId: ctx.userId,
+      allowNegative: allowNegativeIds.has(itemId),
     });
-    if (res.count === 0) {
-      const item = await tx.inventoryItem.findUnique({ where: { id }, select: { name: true } });
-      throw new OutOfStockError(item?.name ?? 'nieznany towar');
-    }
   }
 }
 
-/** Zwraca na stan towary z wszystkich pozycji podanych zleceń (przed ich usunięciem). */
-export async function returnOrdersToStock(tx: Prisma.TransactionClient, where: Prisma.WorkOrderItemWhereInput): Promise<void> {
+/**
+ * Zwraca na stan towary z wszystkich pozycji podanych zleceń (przed ich usunięciem).
+ * Osobny ruch ORDER_RETURN na każde zlecenie — zlecenie jeszcze istnieje, więc ruch dostaje jego id i numer.
+ */
+export async function returnOrdersToStock(
+  tx: Prisma.TransactionClient,
+  businessId: string,
+  where: Prisma.WorkOrderItemWhereInput,
+  userId?: string | null,
+): Promise<void> {
   const items = await tx.workOrderItem.findMany({
     where,
-    select: { inventoryItemIdOp: true, inventoryItemIdOl: true, inventoryItemIdFrame: true },
+    select: {
+      workOrderId: true,
+      inventoryItemIdOp: true,
+      inventoryItemIdOl: true,
+      inventoryItemIdFrame: true,
+      workOrder: { select: { orderNumber: true } },
+    },
+    orderBy: [{ workOrderId: 'asc' }, { id: 'asc' }],
   });
-  const adjustments: Record<string, number> = {};
-  for (const item of items) addLinks(adjustments, item, +1);
-  await applyAdjustments(tx, adjustments);
+  const perOrder = new Map<string, { orderNumber: string; adjustments: Record<string, number> }>();
+  for (const item of items) {
+    let entry = perOrder.get(item.workOrderId);
+    if (!entry) perOrder.set(item.workOrderId, (entry = { orderNumber: item.workOrder.orderNumber, adjustments: {} }));
+    addLinks(entry.adjustments, item, +1);
+  }
+  for (const [workOrderId, { orderNumber, adjustments }] of perOrder) {
+    await applyAdjustments(tx, { businessId, workOrderId, orderNumber, userId }, adjustments);
+  }
 }
