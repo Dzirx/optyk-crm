@@ -122,8 +122,8 @@ function Composer({ onOpenCampaign }: { onOpenCampaign: (id: string) => void }) 
   const [selectNotice, setSelectNotice] = useState('');
   // Wysyłka w tle: karta postępu świeżej kampanii, historia i okno szczegółów.
   const [progressId, setProgressId] = useState<string | null>(null);
-  // Jeden klucz idempotencji na „napisanie wiadomości”: powtórzone żądanie nie tworzy drugiej kampanii.
-  const idempotencyKey = useRef<string | null>(null);
+  // Klucz jest stały dla identycznego żądania (ponowienie po błędzie, podwójne kliknięcie), a nowy, gdy zmieni się treść albo odbiorcy.
+  const idempotency = useRef<{ key: string; signature: string } | null>(null);
   const [error, setError] = useState('');
 
   function toggleSet<T extends string>(set: Set<T>, value: T): Set<T> {
@@ -250,15 +250,17 @@ function Composer({ onOpenCampaign }: { onOpenCampaign: (id: string) => void }) 
     setError('');
 
     try {
-      idempotencyKey.current ??= newIdempotencyKey();
+      const customerIds = Array.from(selected);
+      const signature = `${message}\n${[...customerIds].sort().join(',')}`;
+      if (idempotency.current?.signature !== signature) idempotency.current = { key: newIdempotencyKey(), signature };
       const res = await fetch('/api/sms/campaigns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, customerIds: Array.from(selected), idempotencyKey: idempotencyKey.current }),
+        body: JSON.stringify({ message, customerIds, idempotencyKey: idempotency.current.key }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error');
-      idempotencyKey.current = null;
+      idempotency.current = null;
       setProgressId(data.campaign.id);
       setMessage('');
       setSelected(new Set());

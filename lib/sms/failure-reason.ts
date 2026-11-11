@@ -42,3 +42,8 @@ export function classifySmsFailure(error: string | null | undefined): SmsFailure
   const short = text.length > 120 ? `${text.slice(0, 117)}...` : text;
   return { code: 'other', gateway: false, reason: short || 'Nieznany błąd wysyłki' };
 }
+
+/** Czytelny powód po polsku dla kodu (bez zgadywania z tekstu błędu). */
+export function failureReasonFor(code: SmsFailureCode): string {
+  return code === 'other' ? 'Nieznany błąd wysyłki' : REASONS[code];
+}

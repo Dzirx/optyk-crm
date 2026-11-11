@@ -417,6 +417,8 @@ model SmsCampaign {
   idempotencyKey         String?   @map("idempotency_key") @db.VarChar(64)
   // Dzwonek: kiedy salon oznaczył nieudane SMS-y kampanii jako przeczytane
   failuresAcknowledgedAt DateTime? @map("failures_acknowledged_at") @db.Timestamp(6)
+  // Dzwonek: osobny stan „przeczytane” dla wpisu bramki (błędy konfiguracji z tej kampanii)
+  gatewayAcknowledgedAt  DateTime? @map("gateway_acknowledged_at") @db.Timestamp(6)
 
   business   Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
   recipients SmsCampaignRecipient[]

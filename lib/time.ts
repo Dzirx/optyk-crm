@@ -143,3 +143,9 @@ export function formatDayHeading(isoDate: string, language: string): string {
   const [y, m, d] = isoDate.split('-');
   return `${weekdayName(isoDate, language)}, ${d}.${m}.${y}`;
 }
+
+/** Minuty od północy → „gg:mm”. Wartości spoza doby są przycinane do 00:00-23:59 (1440 = 23:59). */
+export function minutesToHhmm(minutes: number): string {
+  const m = Math.min(Math.max(Math.floor(minutes), 0), 1439);
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}

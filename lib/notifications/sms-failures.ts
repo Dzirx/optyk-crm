@@ -4,7 +4,7 @@
 // Problemy konfiguracji bramki zbieramy w jeden wpis 'sms_gateway'.
 
 import { db } from '@/lib/db';
-import { classifySmsFailure, type SmsFailureCode } from '@/lib/sms/failure-reason';
+import { classifySmsFailure, failureReasonFor, type SmsFailureCode } from '@/lib/sms/failure-reason';
 import { todayIso } from '@/lib/time';
 
 const DAYS = 30;
@@ -45,8 +45,7 @@ export async function listSmsFailureNotifications(businessId: string) {
     db.smsCampaign.findMany({
       where: { businessId, failed: { gt: 0 }, createdAt: { gte: since } },
       orderBy: { createdAt: 'desc' },
-      take: MAX_ITEMS,
-      select: { id: true, total: true, failed: true, createdAt: true, finishedAt: true, failuresAcknowledgedAt: true },
+      select: { id: true, total: true, failed: true, createdAt: true, finishedAt: true, failuresAcknowledgedAt: true, gatewayAcknowledgedAt: true },
     }),
     db.smsLog.findMany({
       where: { status: 'failed', sentAt: { gte: since }, visit: { customer: { businessId } } },
@@ -150,9 +149,9 @@ export async function listSmsFailureNotifications(businessId: string) {
         }
       }
       const at = c.finishedAt ?? c.createdAt;
-      const read = c.failuresAcknowledgedAt !== null;
+      // Wpis bramki i wpis samej kampanii mają osobny stan „przeczytane”.
       if (gwCount > 0) {
-        campaignGateway.push({ id: c.id, at, read, count: gwCount, code: gwCode, reason: classifySmsFailure(gwCode === 'auth' ? 'authorization' : gwCode === 'no_template' ? 'template' : 'provider not configured').reason });
+        campaignGateway.push({ id: c.id, at, read: c.gatewayAcknowledgedAt !== null, count: gwCount, code: gwCode, reason: failureReasonFor(gwCode) });
       }
       const other = c.failed - gwCount;
       if (other > 0) {
@@ -162,7 +161,7 @@ export async function listSmsFailureNotifications(businessId: string) {
           createdAt: at.toISOString(),
           reason: '',
           reasonCode: 'other',
-          read,
+          read: c.failuresAcknowledgedAt !== null,
           count: other,
           campaignId: c.id,
           campaignTotal: c.total,
@@ -187,23 +186,32 @@ export async function listSmsFailureNotifications(businessId: string) {
     });
   }
   items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const top = items.slice(0, MAX_ITEMS);
-  const acks = new Map<string, { logIds: string[]; campaignIds: string[] }>();
-  for (const it of top) {
-    if (it.id === GATEWAY_ID) acks.set(it.id, { logIds: gateway.map((g) => g.id), campaignIds: campaignGateway.map((g) => g.id) });
-    else if (it.campaignId) acks.set(it.id, { logIds: [], campaignIds: [it.campaignId] });
-    else acks.set(it.id, { logIds: [it.id], campaignIds: [] });
+  // Cała lista (nie tylko widoczne 50 wpisów) służy do licznika i do „oznacz wszystkie”.
+  const acks = new Map<string, { logIds: string[]; campaignIds: string[]; gatewayCampaignIds: string[] }>();
+  for (const it of items) {
+    if (it.id === GATEWAY_ID) {
+      acks.set(it.id, { logIds: gateway.map((g) => g.id), campaignIds: [], gatewayCampaignIds: campaignGateway.map((g) => g.id) });
+    } else if (it.campaignId) acks.set(it.id, { logIds: [], campaignIds: [it.campaignId], gatewayCampaignIds: [] });
+    else acks.set(it.id, { logIds: [it.id], campaignIds: [], gatewayCampaignIds: [] });
   }
-  return { items: top, unreadCount: top.filter((i) => !i.read).length, acks };
+  return { items: items.slice(0, MAX_ITEMS), unreadCount: items.filter((i) => !i.read).length, acks, all: items };
 }
 
 /** Oznacza jako przeczytane wskazane wpisy (brak `ids` = wszystkie nierozwiązane). */
 export async function acknowledgeSmsFailures(businessId: string, ids?: string[]) {
-  const { items, acks } = await listSmsFailureNotifications(businessId);
+  const { all: items, acks } = await listSmsFailureNotifications(businessId);
   const wanted = ids ? items.filter((i) => ids.includes(i.id)) : items;
   const toAck = wanted.flatMap((i) => acks.get(i.id)?.logIds ?? []);
   const campaignIds = wanted.flatMap((i) => acks.get(i.id)?.campaignIds ?? []);
+  const gatewayCampaignIds = wanted.flatMap((i) => acks.get(i.id)?.gatewayCampaignIds ?? []);
   let count = 0;
+  if (gatewayCampaignIds.length > 0) {
+    const r = await db.smsCampaign.updateMany({
+      where: { id: { in: gatewayCampaignIds }, businessId, gatewayAcknowledgedAt: null },
+      data: { gatewayAcknowledgedAt: new Date() },
+    });
+    count += r.count;
+  }
   if (campaignIds.length > 0) {
     const r = await db.smsCampaign.updateMany({
       where: { id: { in: campaignIds }, businessId, failuresAcknowledgedAt: null },

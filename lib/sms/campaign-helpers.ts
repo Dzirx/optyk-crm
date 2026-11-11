@@ -1,4 +1,5 @@
 // Czyste funkcje kampanii SMS (bez bazy) — testowane jednostkowo.
+import { SMS_SEND_TIMEOUT_MS } from './providers/interface';
 
 export const CAMPAIGN_STATUSES = ['queued', 'sending', 'done', 'cancelled'] as const;
 export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
@@ -12,6 +13,8 @@ export const CLAIM_STALE_MS = 5 * 60 * 1000;
 export const CLAIM_BATCH_SIZE = 20;
 /** Ile SMS-ów z jednej partii wysyłamy równolegle. */
 export const SEND_CONCURRENCY = 5;
+/** Najdłuższy czas jednej zarezerwowanej partii (ms): wysyłki idą w SEND_CONCURRENCY torach, każde żądanie trwa najwyżej SMS_SEND_TIMEOUT_MS (+1 s zapasu sendSafely). Musi być dużo krótszy od CLAIM_STALE_MS. */
+export const MAX_BATCH_MS = Math.ceil(CLAIM_BATCH_SIZE / SEND_CONCURRENCY) * (SMS_SEND_TIMEOUT_MS + 1000);
 /** Najdłuższy czas jednego uruchomienia harmonogramu; resztę dokończy następne uruchomienie. */
 export const RUN_BUDGET_MS = 110 * 1000;
 /** Najdłuższy czas natychmiastowej wysyłki po utworzeniu kampanii. */
@@ -47,11 +50,6 @@ export function isCampaignActive(status: string): boolean {
 /** Ile odbiorców czeka na wysyłkę albo jest w trakcie (łącznie − wysłane − nieudane). */
 export function campaignRemaining(c: { total: number; sent: number; failed: number }): number {
   return Math.max(0, c.total - c.sent - c.failed);
-}
-
-/** Czy odbiorca z tą datą rezerwacji można przejąć (rezerwacja porzucona). */
-export function isStaleClaim(claimedAt: Date | null, now = Date.now()): boolean {
-  return !claimedAt || now - claimedAt.getTime() >= CLAIM_STALE_MS;
 }
 
 /** Nowy klucz idempotencji (jeden na „napisanie wiadomości”). Gdy brak crypto.randomUUID (HTTP), losowy ciąg. */

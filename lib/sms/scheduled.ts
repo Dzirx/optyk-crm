@@ -24,13 +24,6 @@ export async function runScheduledSms() {
     campaigns: { campaigns: 0, sent: 0, failed: 0, finished: 0 },
   };
 
-  // Wysyłki grupowe (kampanie) w tle: ten sam harmonogram, krótki limit czasu na uruchomienie.
-  try {
-    results.campaigns = await processCampaigns();
-  } catch (error) {
-    console.error('[CRON] Campaign processing failed:', error);
-  }
-
   // Find pending reminder SMS (before visit)
   const pendingReminders = await db.visit.findMany({
     where: {
@@ -90,6 +83,14 @@ export async function runScheduledSms() {
   for (const visit of pendingReviews) {
     results.reviewSms.processed++;
     await processSms(visit, 'review', results);
+  }
+
+  // Wysyłki grupowe (kampanie) w tle: ten sam harmonogram, krótki limit czasu na uruchomienie.
+  // Na końcu, żeby przypomnienia i prośby o opinię (zależne od czasu) nie czekały na długą kampanię.
+  try {
+    results.campaigns = await processCampaigns();
+  } catch (error) {
+    console.error('[CRON] Campaign processing failed:', error);
   }
 
   console.log(`[CRON] Job completed. Reminders: ${results.reminderSms.sent}/${results.reminderSms.processed}, Reviews: ${results.reviewSms.sent}/${results.reviewSms.processed}`);

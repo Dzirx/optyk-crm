@@ -75,3 +75,11 @@ test('okno całodobowe 0-1440 i okno puste', () => {
   assert.equal(isWithinSendWindow(at('2026-01-15T23:00:00Z'), 0, 1440), true); // 00:00 następnego dnia
   assert.equal(isWithinSendWindow(at('2026-01-15T12:00:00Z'), 600, 600), false);
 });
+
+test('Wigilia jest świętem dopiero od 2025 r.', () => {
+  assert.equal(isHoliday('2024-12-24'), false);
+  assert.equal(isWorkingDay('2024-12-24'), true); // wtorek
+  assert.equal(polishHolidays(2024).size, 13);
+  assert.equal(isHoliday('2025-12-24'), true);
+  assert.equal(previousWorkingDay('2024-12-25'), '2024-12-24');
+});

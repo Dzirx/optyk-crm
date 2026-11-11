@@ -4,7 +4,9 @@
 // Wysyłkę prowadzi processCampaign: wywołuje ją kickCampaign tuż po utworzeniu oraz
 // runScheduledSms (harmonogram chmury, licznik Windows, endpoint crona) przez processCampaigns.
 // Odbiorcy są rezerwowani atomowo (FOR UPDATE SKIP LOCKED), więc równoległe procesy
-// nigdy nie wysyłają do tej samej osoby dwa razy. Rezerwacja starsza niż 5 min jest porzucona.
+// nigdy nie wysyłają do tej samej osoby dwa razy. Rezerwacja starsza niż CLAIM_STALE_MS jest porzucona.
+// Jedno żądanie do bramki trwa najwyżej SMS_SEND_TIMEOUT_MS, a czas partii jest znacznie krótszy
+// od CLAIM_STALE_MS (patrz MAX_BATCH_MS), więc nikt nie przejmie odbiorcy, którego ktoś jeszcze wysyła.
 
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
@@ -17,7 +19,7 @@ import { sendSafely } from '@/lib/sms/delivery';
 import { classifySmsFailure } from '@/lib/sms/failure-reason';
 import { MAX_BULK_RECIPIENTS } from '@/lib/sms/limits';
 import {
-  CLAIM_BATCH_SIZE, KICK_BUDGET_MS, RUN_BUDGET_MS, SEND_CONCURRENCY, renderCampaignMessage, uniqueIds,
+  CLAIM_BATCH_SIZE, CLAIM_STALE_MS, KICK_BUDGET_MS, RUN_BUDGET_MS, SEND_CONCURRENCY, renderCampaignMessage, uniqueIds,
 } from '@/lib/sms/campaign-helpers';
 import type { Business } from '@/lib/api/handler';
 import { smsGatewayConfigured } from '@/lib/sms/configured';
@@ -143,7 +145,7 @@ async function claimBatch(campaignId: string, limit: number): Promise<ClaimedRec
        SELECT id FROM sms_campaign_recipients
         WHERE campaign_id = ${campaignId}::uuid
           AND (status = 'pending'
-               OR (status = 'sending' AND claimed_at < (now() AT TIME ZONE 'UTC') - interval '5 minutes'))
+               OR (status = 'sending' AND claimed_at < (now() AT TIME ZONE 'UTC') - (${CLAIM_STALE_MS / 1000}::double precision * interval '1 second')))
         ORDER BY customer_name, id
         LIMIT ${limit}
         FOR UPDATE SKIP LOCKED
@@ -218,6 +220,22 @@ interface ProcessOptions {
   maxRecipients?: number;
 }
 
+/**
+ * Kampania w toku, której właściciel nie ma już dostępu (koniec okresu próbnego), dostaje status 'cancelled',
+ * a jej oczekujący odbiorcy 'cancelled' (liczniki sent/failed się nie zmieniają). Zwraca true, gdy zakończono.
+ */
+async function cancelIfOwnerInactive(campaignId: string): Promise<boolean> {
+  return db.$transaction(async (tx) => {
+    const res = await tx.smsCampaign.updateMany({
+      where: { id: campaignId, status: { in: ['queued', 'sending'] }, NOT: { business: { user: activeUserWhere(new Date()) } } },
+      data: { status: 'cancelled', finishedAt: new Date() },
+    });
+    if (res.count !== 1) return false;
+    await tx.smsCampaignRecipient.updateMany({ where: { campaignId, status: 'pending' }, data: { status: 'cancelled' } });
+    return true;
+  });
+}
+
 /** Wysyła oczekujących odbiorców jednej kampanii. Bezpieczne przy równoległych wywołaniach. */
 export async function processCampaign(campaignId: string, opts: ProcessOptions = {}): Promise<ProcessResult> {
   const deadline = opts.deadline ?? Date.now() + RUN_BUDGET_MS;
@@ -229,7 +247,11 @@ export async function processCampaign(campaignId: string, opts: ProcessOptions =
     where: { id: campaignId, status: { in: ['queued', 'sending'] }, business: { user: activeUserWhere(new Date()) } },
     include: { business: { select: { name: true, smsProvider: true, smsConfig: true } } },
   });
-  if (!campaign) return out;
+  if (!campaign) {
+    // Kampania salonu po końcu okresu próbnego nie ruszy już nigdy: kończymy ją jako anulowaną.
+    out.finished = await cancelIfOwnerInactive(campaignId);
+    return out;
+  }
   const { business } = campaign;
 
   let provider: ISmsProvider | null = null;
@@ -300,6 +322,18 @@ export async function processCampaign(campaignId: string, opts: ProcessOptions =
 export async function processCampaigns(opts: { maxPerRun?: number; budgetMs?: number } = {}) {
   const maxPerRun = opts.maxPerRun ?? 2000;
   const deadline = Date.now() + (opts.budgetMs ?? RUN_BUDGET_MS);
+  // Najpierw kończymy kampanie salonów bez aktywnego dostępu, żeby nie wisiały w kolejce.
+  const orphaned = await db.smsCampaign.findMany({
+    where: { status: { in: ['queued', 'sending'] }, NOT: { business: { user: activeUserWhere(new Date()) } } },
+    select: { id: true },
+  });
+  for (const { id } of orphaned) {
+    try {
+      await cancelIfOwnerInactive(id);
+    } catch (error) {
+      console.error(`[SMS campaign ${id}] Błąd anulowania:`, error);
+    }
+  }
   const campaigns = await db.smsCampaign.findMany({
     where: { status: { in: ['queued', 'sending'] }, business: { user: activeUserWhere(new Date()) } },
     orderBy: { createdAt: 'asc' },

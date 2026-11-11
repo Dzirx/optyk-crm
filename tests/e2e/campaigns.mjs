@@ -313,7 +313,7 @@ await run(async () => {
   check(nA.items.some((i) => i.kind === 'sms_campaign' && i.campaignId === id4 && i.count === 2 && i.campaignTotal === 5), 'salon A: wpis kampanii id4 (2 z 5)');
   check(!nA.items.some((i) => i.campaignId === id1), 'kampania bez błędów nie ma wpisu');
 
-  section('okres próbny zakończony: kampania nie jest przetwarzana');
+  section('okres próbny zakończony: kampania jest anulowana, nie wysyła');
   const T = await salon('CT');
   const cT = customers(T, 3);
   sql(`update users set access_until = now() - interval '1 day' where email='${T.email}'`);
@@ -323,12 +323,12 @@ await run(async () => {
   }
   await cron();
   await Promise.all([cron(), cron()]);
-  check(sql(`select status from sms_campaigns where id='${campT}'`) === 'queued', 'po okresie próbnym: kampania nadal queued');
-  check(sql(`select count(*) from sms_campaign_recipients where campaign_id='${campT}' and status='pending'`) === '3' && callsTo(cT.phones).length === 0, 'odbiorcy pending, bramka nietknięta');
+  const cancelledT = sql(`select status || ',' || (finished_at is not null) || ',' || sent || ',' || failed from sms_campaigns where id='${campT}'`);
+  check(cancelledT === 'cancelled,true,0,0', `po okresie próbnym: kampania zakończona jako anulowana (${cancelledT})`);
+  check(sql(`select count(*) from sms_campaign_recipients where campaign_id='${campT}' and status='cancelled'`) === '3' && callsTo(cT.phones).length === 0, 'odbiorcy anulowani, bramka nietknięta');
   sql(`update users set access_until = null where email='${T.email}'`);
   await cron();
-  const doneT = sql(`select status || ',' || sent from sms_campaigns where id='${campT}'`);
-  check(doneT === 'done,3' && callsTo(cT.phones).length === 3, `po przywróceniu dostępu cron kończy kampanię (${doneT})`);
+  check(sql(`select status from sms_campaigns where id='${campT}'`) === 'cancelled' && callsTo(cT.phones).length === 0, 'po przywróceniu dostępu anulowana kampania nie rusza');
 
   section('rezerwacje: porzucona („sending” > 5 min) jest przejmowana, świeża nie');
   const S = await salon('CS');

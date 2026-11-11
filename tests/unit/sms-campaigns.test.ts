@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  campaignRemaining, isCampaignActive, isStaleClaim, isValidIdempotencyKey, messagePreview,
-  newIdempotencyKey, renderCampaignMessage, uniqueIds, CLAIM_STALE_MS,
+  campaignRemaining, isCampaignActive, isValidIdempotencyKey, messagePreview,
+  newIdempotencyKey, renderCampaignMessage, uniqueIds, CLAIM_STALE_MS, MAX_BATCH_MS,
 } from '../../lib/sms/campaign-helpers';
 import { odbiorcyPl, recipientsLabel } from '../../lib/plural';
 
@@ -53,11 +53,8 @@ test('isCampaignActive / campaignRemaining', () => {
   assert.equal(campaignRemaining({ total: 10, sent: 10, failed: 3 }), 0);
 });
 
-test('isStaleClaim: rezerwacja starsza niż 5 minut jest porzucona', () => {
-  const now = Date.now();
-  assert.equal(isStaleClaim(null, now), true);
-  assert.equal(isStaleClaim(new Date(now - CLAIM_STALE_MS + 1000), now), false);
-  assert.equal(isStaleClaim(new Date(now - CLAIM_STALE_MS), now), true);
+test('najdłuższa partia kończy się dużo przed porzuceniem rezerwacji', () => {
+  assert.ok(MAX_BATCH_MS <= CLAIM_STALE_MS / 2, `${MAX_BATCH_MS} ms vs ${CLAIM_STALE_MS} ms`);
 });
 
 test('odmiana „do N odbiorców”', () => {
@@ -68,4 +65,14 @@ test('odmiana „do N odbiorców”', () => {
   assert.equal(recipientsLabel(22, 'pl'), '22 odbiorców');
   assert.equal(recipientsLabel(1, 'en'), '1 recipient');
   assert.equal(recipientsLabel(3, 'en'), '3 recipients');
+});
+
+test('sendSafely: zawieszona bramka daje błąd po limicie czasu, bez ponawiania', async () => {
+  const { sendSafely } = await import('../../lib/sms/delivery');
+  let calls = 0;
+  const hung = { sendSms: () => { calls++; return new Promise<never>(() => {}); } };
+  const res = await sendSafely(hung, '+48500100200', 'x', 50);
+  assert.equal(res.success, false);
+  assert.match(res.error ?? '', /Przekroczono czas/);
+  assert.equal(calls, 1);
 });

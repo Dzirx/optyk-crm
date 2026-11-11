@@ -2,7 +2,7 @@
 // a aplikacja ma liczyć dni według czasu polskiego.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { todayRange, formatDatePl, currentYear, dayBounds, addDaysIso, isIsoDay, weekdayName, formatDayHeading } from '../../lib/time';
+import { minutesToHhmm, todayRange, formatDatePl, currentYear, dayBounds, addDaysIso, isIsoDay, weekdayName, formatDayHeading } from '../../lib/time';
 import { renderSmsTemplate } from '../../lib/sms/render';
 
 const cases: [string, string, string, string][] = [
@@ -97,4 +97,12 @@ test('weekdayName i formatDayHeading: PL i EN', () => {
   assert.equal(weekdayName('2026-11-14', 'pl'), 'Sobota');
   assert.equal(formatDayHeading('2026-11-11', 'pl'), 'Środa, 11.11.2026');
   assert.equal(formatDayHeading('2026-03-05', 'en'), 'Thursday, 05.03.2026');
+});
+
+test('minutesToHhmm: zero na początku, 1440 i więcej to 23:59', () => {
+  assert.equal(minutesToHhmm(0), '00:00');
+  assert.equal(minutesToHhmm(540), '09:00');
+  assert.equal(minutesToHhmm(1439), '23:59');
+  assert.equal(minutesToHhmm(1440), '23:59');
+  assert.equal(minutesToHhmm(-5), '00:00');
 });

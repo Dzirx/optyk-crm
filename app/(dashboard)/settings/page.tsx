@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/language-context';
+import { minutesToHhmm } from '@/lib/time';
 
 interface Business {
   id: string;
@@ -16,8 +17,7 @@ interface Business {
   autoReminders: boolean;
 }
 
-/** Minuty od północy ↔ „gg:mm” dla pola time. */
-const minutesToTime = (m: number) => `${String(Math.floor(Math.min(m, 1439) / 60)).padStart(2, '0')}:${String(Math.min(m, 1439) % 60).padStart(2, '0')}`;
+/** „gg:mm” z pola time → minuty od północy. */
 const timeToMinutes = (v: string) => {
   const [h, min] = v.split(':').map(Number);
   return h * 60 + min;
@@ -66,8 +66,8 @@ export default function SettingsPage() {
           smsConfig: data.business.smsConfig || {},
           reminderSmsTemplate: data.business.reminderSmsTemplate || '',
           reviewSmsTemplate: data.business.reviewSmsTemplate || '',
-          reminderWindowStart: minutesToTime(data.business.reminderWindowStart ?? 540),
-          reminderWindowEnd: minutesToTime(data.business.reminderWindowEnd ?? 1020),
+          reminderWindowStart: minutesToHhmm(data.business.reminderWindowStart ?? 540),
+          reminderWindowEnd: minutesToHhmm(data.business.reminderWindowEnd ?? 1020),
           autoReminders: data.business.autoReminders ?? false,
         });
       }

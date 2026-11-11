@@ -14,7 +14,7 @@ export BASE="http://127.0.0.1:${E2E_PORT}"
 # Dziennik wywołań fałszywej bramki SMS (fake-sms.cjs): kampanie liczą wysyłki do numerów.
 
 SUITES=("$@")
-[ ${#SUITES[@]} -eq 0 ] && SUITES=(idor fixes trial license api notifications pagination stock-count stock-count-asof movements review-fixes campaigns invariants review-request sms-failure-reason scheduled-sms)
+[ ${#SUITES[@]} -eq 0 ] && SUITES=(idor fixes trial license api notifications pagination stock-count stock-count-asof movements review-fixes campaigns invariants review-request sms-failure-reason scheduled-sms review-fixes-sms)
 
 e2e_init
 export FAKE_SMS_LOG="$WORK_DIR/sms-calls.log"

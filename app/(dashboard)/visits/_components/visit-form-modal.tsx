@@ -4,6 +4,7 @@ import type { Dispatch, FormEvent, SetStateAction } from 'react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { autoReminderDay } from '../_lib/reminder';
+import { minutesToHhmm } from '@/lib/time';
 import type { NewCustomerData, VisitFormData } from '../_lib/types';
 import { VisitCustomerPicker } from './visit-customer-picker';
 
@@ -33,8 +34,6 @@ interface VisitFormModalProps {
   onSubmit: (e: FormEvent) => void;
   onClose: () => void;
 }
-
-const hhmm = (min: number) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 
 export function VisitFormModal({
   editing, smsReady, autoReminders, reminderWindow, reminderLocked, selectedCustomerName, setSelectedCustomerName, formData, setFormData, formError, formLoading, customerSearch, setCustomerSearch,
@@ -145,7 +144,7 @@ export function VisitFormModal({
               )}
               {!reminderDisabled && !reminderLocked && formData.reminderSmsDate && reminderWindow && (
                 <p className="mt-1 text-xs text-gray-500">
-                  {t('reminderSendsBetween')} {hhmm(reminderWindow.start)}–{hhmm(reminderWindow.end)}
+                  {t('reminderSendsBetween')} {minutesToHhmm(reminderWindow.start)}–{minutesToHhmm(reminderWindow.end)}
                 </p>
               )}
             </div>

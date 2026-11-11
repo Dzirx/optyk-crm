@@ -6,7 +6,7 @@
 
 import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import type { ISmsProvider, SmsResult } from './providers/interface';
+import { SMS_SEND_TIMEOUT_MS, SMS_TIMEOUT_ERROR, type ISmsProvider, type SmsResult } from './providers/interface';
 
 export type VisitSmsType = 'reminder' | 'review';
 
@@ -50,13 +50,25 @@ export async function markVisitSmsFailed(visitId: string, type: VisitSmsType): P
   });
 }
 
-/** Wysyłka, która nigdy nie rzuca wyjątku — błąd zawsze wraca jako { success: false }. */
-export async function sendSafely(provider: ISmsProvider, phone: string, message: string): Promise<SmsResult> {
+/**
+ * Wysyłka, która nigdy nie rzuca wyjątku — błąd zawsze wraca jako { success: false }.
+ * Twardy limit czasu (SMS_SEND_TIMEOUT_MS) działa też, gdy dostawca nie przerwie żądania sam.
+ * Przekroczenie limitu to błąd bez ponawiania: bramka mogła już dostarczyć wiadomość.
+ */
+export async function sendSafely(provider: ISmsProvider, phone: string, message: string, timeoutMs = SMS_SEND_TIMEOUT_MS): Promise<SmsResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const result = await provider.sendSms(phone, message);
-    return result ?? { success: false, error: 'Brak odpowiedzi dostawcy SMS' };
+    const timeout = new Promise<SmsResult>((resolve) => {
+      timer = setTimeout(() => resolve({ success: false, error: SMS_TIMEOUT_ERROR }), timeoutMs + 1000);
+    });
+    const send = provider.sendSms(phone, message).then((r) => r ?? { success: false, error: 'Brak odpowiedzi dostawcy SMS' });
+    // Spóźniony wynik (po limicie) jest ignorowany, ale jego błąd nie może zostać nieobsłużony.
+    send.catch(() => undefined);
+    return await Promise.race([send, timeout]);
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Nieznany błąd wysyłki' };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

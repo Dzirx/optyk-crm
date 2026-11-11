@@ -27,7 +27,7 @@ export function easterSunday(year: number): string {
 /** Dni ustawowo wolne od pracy w danym roku (yyyy-mm-dd), z Wigilią (od 2025 r.). */
 export function polishHolidays(year: number): Set<string> {
   const easter = easterSunday(year);
-  return new Set([
+  const days = [
     ymd(year, 1, 1),
     ymd(year, 1, 6),
     easter,
@@ -39,10 +39,11 @@ export function polishHolidays(year: number): Set<string> {
     ymd(year, 8, 15),
     ymd(year, 11, 1),
     ymd(year, 11, 11),
-    ymd(year, 12, 24),
     ymd(year, 12, 25),
     ymd(year, 12, 26),
-  ]);
+  ];
+  if (year >= 2025) days.push(ymd(year, 12, 24)); // Wigilia: wolna od 2025 r.
+  return new Set(days);
 }
 
 export function isHoliday(day: string): boolean {

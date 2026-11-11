@@ -1,4 +1,4 @@
-import { ISmsProvider, SmsResult, SmsProviderConfig } from './interface';
+import { ISmsProvider, SmsResult, SmsProviderConfig, SMS_SEND_TIMEOUT_MS, SMS_TIMEOUT_ERROR } from './interface';
 
 /**
  * SMSPlanet Provider (Poland)
@@ -32,6 +32,7 @@ export class SmsPlanetProvider implements ISmsProvider {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: params.toString(),
+        signal: AbortSignal.timeout(SMS_SEND_TIMEOUT_MS),
       });
 
       const data = await response.json();
@@ -44,7 +45,7 @@ export class SmsPlanetProvider implements ISmsProvider {
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Network error',
+        error: error instanceof Error && error.name === 'TimeoutError' ? SMS_TIMEOUT_ERROR : error instanceof Error ? error.message : 'Network error',
       };
     }
   }

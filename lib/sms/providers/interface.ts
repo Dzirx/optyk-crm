@@ -18,3 +18,8 @@ export interface SmsProviderConfig {
   region?: string;
   [key: string]: string | undefined;
 }
+
+/** Najdłuższy czas jednego żądania do bramki SMS. Po nim wysyłka liczy się jako nieudana (bez ponawiania). */
+export const SMS_SEND_TIMEOUT_MS = 30_000;
+
+export const SMS_TIMEOUT_ERROR = `Przekroczono czas oczekiwania na odpowiedź bramki SMS (${SMS_SEND_TIMEOUT_MS / 1000} s); wiadomość mogła zostać dostarczona`;

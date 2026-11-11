@@ -133,7 +133,9 @@ await run(async () => {
   r = await c.req('PATCH', `/api/visits/${v2.id}`, { reminderSmsDate: '2027-02-14T12:00:00.000Z' });
   check(r.status === 200 && r.json.visit.reminderSmsStatus === 'pending', `nowa data po błędzie → status pending (${r.json?.visit?.reminderSmsStatus})`);
   r = await c.req('PATCH', `/api/visits/${v2.id}`, { visitDate: '2027-02-13T08:00:00.000Z' });
-  check(r.status === 400, `wizyta przed przypomnieniem → 400 (${r.status})`);
+  check(r.status === 200 && r.json.visit.reminderSmsDate?.startsWith('2027-02-11T23:00'), `wizyta przed przypomnieniem, bez daty SMS w żądaniu → 200, przypomnienie przeliczone na piątek 12.02 (${r.status} ${r.json?.visit?.reminderSmsDate})`);
+  r = await c.req('PATCH', `/api/visits/${v2.id}`, { visitDate: '2027-02-10T08:00:00.000Z', reminderSmsDate: '2027-02-14T12:00:00.000Z' });
+  check(r.status === 400, `jawnie podany zły dzień przypomnienia → 400 (${r.status})`);
 
   section('3. „wizyty dziś” w strefie Europe/Warsaw (serwer w UTC)');
   // 23:30 czasu polskiego dziś = wizyta dziś; 00:30 jutro czasu polskiego = nie dziś.

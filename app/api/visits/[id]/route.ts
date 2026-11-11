@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { withBusiness } from '@/lib/api/handler';
 import { customerBelongsTo } from '@/lib/api/ownership';
 import { dayBounds, todayIso } from '@/lib/time';
+import { previousWorkingDay } from '@/lib/holidays-pl';
 import { REMINDER_BEFORE_VISIT, REVIEW_AFTER_VISIT, reminderAfterVisitDay, updateVisitSchema } from '@/lib/api/schemas/visits';
 
 const NOT_FOUND = 'Nie znaleziono wizyty';
@@ -85,7 +86,17 @@ export const PATCH = withBusiness(
     // Kolejność dat sprawdzamy, gdy zmienia się data SMS albo data wizyty (SMS jeszcze niewysłany).
     // Bez daty SMS w żądaniu porównujemy z datą zapisaną w bazie.
     const newVisitDate = visitDate ?? visit.visitDate;
-    const effectiveReminder = reminderSmsDate !== undefined ? reminderSmsDate : visit.reminderSmsDate;
+    // Termin wizyty przesunięty bez daty SMS w żądaniu (formularz ukrywa pole): zapisane przypomnienie,
+    // które wypadłoby po nowym dniu wizyty, liczymy od nowa — poprzedni dzień roboczy, a gdy ten już minął, bez przypomnienia.
+    let autoReminder: Date | null | undefined;
+    if (
+      reminderSmsDate === undefined && visitDate && visit.reminderSmsDate &&
+      visit.reminderSmsStatus === 'pending' && reminderAfterVisitDay(visit.reminderSmsDate, visitDate)
+    ) {
+      const day = previousWorkingDay(todayIso(visitDate));
+      autoReminder = day < todayIso() ? null : dayBounds(day).start;
+    }
+    const effectiveReminder = reminderSmsDate !== undefined ? reminderSmsDate : autoReminder !== undefined ? autoReminder : visit.reminderSmsDate;
     const effectiveReview = reviewSmsDate !== undefined ? reviewSmsDate : visit.reviewSmsDate;
     if (effectiveReminder && (reminderChanged || (visitDate && visit.reminderSmsStatus !== 'sent'))) {
       if (reminderAfterVisitDay(effectiveReminder, newVisitDate)) return badRequest(REMINDER_BEFORE_VISIT);
@@ -104,6 +115,7 @@ export const PATCH = withBusiness(
       updateData.reminderSmsDate = reminderSmsDate;
       if (reminderSmsDate && visit.reminderSmsStatus === 'failed') updateData.reminderSmsStatus = 'pending';
     }
+    else if (autoReminder !== undefined) updateData.reminderSmsDate = autoReminder;
     if (reviewChanged) {
       updateData.reviewSmsDate = reviewSmsDate;
       if (reviewSmsDate && visit.reviewSmsStatus === 'failed') updateData.reviewSmsStatus = 'pending';
