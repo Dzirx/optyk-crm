@@ -1,0 +1,18 @@
+# Kontekst obrazu chmurowego (Dockerfile w katalogu głównym).
+# Sekrety nie mogą trafić do obrazu: Next.js kopiuje .env do .next/standalone.
+.env
+.env.*
+docker-optyk.yaml
+
+# Zależności i wyniki budowania (obraz instaluje i buduje je sam).
+node_modules
+.next
+.next-*
+tsconfig.tsbuildinfo
+
+# Rzeczy niepotrzebne w obrazie.
+.git
+desktop
+tests
+results2.csv
+*.log

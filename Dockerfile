@@ -12,7 +12,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+# Adres zastępczy tylko na czas budowania (lib/db wymaga zmiennej przy imporcie);
+# budowanie nie łączy się z bazą, a prawdziwy adres daje compose w czasie działania.
+RUN DATABASE_URL="postgresql://build:build@localhost:5432/build" npm run build
 
 FROM base AS runner
 WORKDIR /app
