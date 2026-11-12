@@ -30,7 +30,7 @@ e2e_cleanup() {
     kill -9 -- "-$SERVER_PID" 2>/dev/null || true
   fi
   if [ "$DB_STARTED" = 1 ]; then
-    docker rm -f "$E2E_DB_CONTAINER" >/dev/null 2>&1 || true
+    docker rm -fv "$E2E_DB_CONTAINER" >/dev/null 2>&1 || true
   fi
   [ -n "$WORK_DIR" ] && rm -rf "$WORK_DIR"
   exit "$code"
@@ -44,7 +44,7 @@ e2e_init() {
     exit 2
   fi
   if docker container inspect "$E2E_DB_CONTAINER" >/dev/null 2>&1; then
-    echo "Kontener $E2E_DB_CONTAINER już istnieje (poprzedni test?). Usuń go: DOCKER_CONTEXT=desktop-linux docker rm -f $E2E_DB_CONTAINER" >&2
+    echo "Kontener $E2E_DB_CONTAINER już istnieje (poprzedni test?). Usuń go: DOCKER_CONTEXT=desktop-linux docker rm -fv $E2E_DB_CONTAINER" >&2
     exit 2
   fi
 }
