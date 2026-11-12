@@ -2,10 +2,10 @@
 set -e
 
 echo "Running database migrations..."
-npx prisma db push --skip-generate
+node /opt/prisma-cli/node_modules/prisma/build/index.js db push --skip-generate
 
 echo "Running seed..."
-npx tsx lib/db/seed.ts --silent
+node seed.cjs --silent
 
 echo "Starting application..."
 exec node server.js
