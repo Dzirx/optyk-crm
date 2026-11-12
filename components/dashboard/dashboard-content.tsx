@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { formatPln } from '@/lib/money';
+import { formatDateTimePl } from '@/lib/time';
+import type { TranslationKey } from '@/lib/i18n/translations';
 
 interface RecentVisit {
   id: string;
@@ -130,13 +132,13 @@ export function DashboardContent({ userName, stats, recentVisits, readyWorkOrder
         {/* Recent Visits */}
         <div className="bg-white rounded-lg shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">{t('recentActivity')}</h2>
+            <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">{t('upcomingVisits')}</h2>
             <Link href="/visits" className="text-xs text-blue-600 hover:text-blue-800 font-medium">
               {t('viewVisits')} →
             </Link>
           </div>
           {recentVisits.length === 0 ? (
-            <p className="px-5 py-10 text-center text-sm text-gray-400">{t('noVisitsFound')}</p>
+            <p className="px-5 py-10 text-center text-sm text-gray-400">{t('noUpcomingVisits')}</p>
           ) : (
             <ul className="divide-y divide-gray-50">
               {recentVisits.map((visit) => (
@@ -145,16 +147,22 @@ export function DashboardContent({ userName, stats, recentVisits, readyWorkOrder
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-900 truncate">{visit.customerName}</p>
                       <p className="text-xs text-gray-400 mt-0.5">
-                        {new Date(visit.visitDate).toLocaleDateString('pl-PL')}
+                        {formatDateTimePl(visit.visitDate)}
                         {visit.visitType && <span> · {visit.visitType}</span>}
                       </p>
                     </div>
-                    <div className="flex gap-1 flex-shrink-0">
+                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
                       {visit.reminderSmsDate && visit.reminderSmsStatus && (
-                        <SmsBadge status={visit.reminderSmsStatus} label={t('smsReminder')} />
+                        <SmsBadge
+                          status={visit.reminderSmsStatus}
+                          label={`${t('smsReminderFull')}: ${t(`smsBadgeStatus_${visit.reminderSmsStatus}` as TranslationKey)}`}
+                        />
                       )}
                       {visit.reviewSmsDate && visit.reviewSmsStatus && (
-                        <SmsBadge status={visit.reviewSmsStatus} label={t('smsReview')} />
+                        <SmsBadge
+                          status={visit.reviewSmsStatus}
+                          label={`${t('smsReviewFull')}: ${t(`smsBadgeStatus_${visit.reviewSmsStatus}` as TranslationKey)}`}
+                        />
                       )}
                     </div>
                   </div>

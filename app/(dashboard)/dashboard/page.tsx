@@ -62,10 +62,11 @@ export default async function DashboardPage() {
     stats.readyOrders = readyOrdersCount;
 
     const [recentVisitsRaw, readyOrdersRaw] = await Promise.all([
+      // Najbliższe wizyty: od początku dzisiejszego dnia (strefa salonu), od najbliższej.
       db.visit.findMany({
-        where: { customer: { businessId: userBusiness.id } },
+        where: { customer: { businessId: userBusiness.id }, visitDate: { gte: today } },
         include: { customer: true },
-        orderBy: { visitDate: 'desc' },
+        orderBy: { visitDate: 'asc' },
         take: 6,
       }),
       db.workOrder.findMany({
