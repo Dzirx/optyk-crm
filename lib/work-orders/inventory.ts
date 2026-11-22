@@ -2,6 +2,7 @@
 
 import type { Prisma } from '@prisma/client';
 import { OutOfStockError, changeStock } from '@/lib/stock/movements';
+import { qtyOf } from './totals';
 
 export { OutOfStockError };
 
@@ -9,6 +10,9 @@ type InventoryLinks = {
   inventoryItemIdOp?: string | null;
   inventoryItemIdOl?: string | null;
   inventoryItemIdFrame?: string | null;
+  /** Ilość sztuk szkła/soczewki dla oka (brak = 1). Oprawka to zawsze 1 sztuka. */
+  opQty?: number | null;
+  olQty?: number | null;
 };
 
 type OrderedFlags = InventoryLinks & { opOrdered?: boolean; olOrdered?: boolean; frameOrdered?: boolean };
@@ -24,10 +28,18 @@ export function orderedInventoryIds(rows: OrderedFlags[]): Set<string> {
   return ids;
 }
 
-/** Dodaje do mapy zmian stanu wszystkie towary powiązane z pozycją (delta: -1 pobranie, +1 zwrot). */
+/**
+ * Dodaje do mapy zmian stanu wszystkie towary powiązane z pozycją (delta: -1 pobranie, +1 zwrot).
+ * Szkło/soczewka liczy się razy ilość sztuk dla oka.
+ */
 export function addLinks(adjustments: Record<string, number>, item: InventoryLinks, delta: number): void {
-  for (const id of [item.inventoryItemIdOp, item.inventoryItemIdOl, item.inventoryItemIdFrame]) {
-    if (id) adjustments[id] = (adjustments[id] || 0) + delta;
+  const links: [string | null | undefined, number][] = [
+    [item.inventoryItemIdOp, qtyOf(item.opQty)],
+    [item.inventoryItemIdOl, qtyOf(item.olQty)],
+    [item.inventoryItemIdFrame, 1],
+  ];
+  for (const [id, count] of links) {
+    if (id) adjustments[id] = (adjustments[id] || 0) + delta * count;
   }
 }
 
@@ -97,6 +109,8 @@ export async function returnOrdersToStock(
       inventoryItemIdOp: true,
       inventoryItemIdOl: true,
       inventoryItemIdFrame: true,
+      opQty: true,
+      olQty: true,
       workOrder: { select: { orderNumber: true } },
     },
     orderBy: [{ workOrderId: 'asc' }, { id: 'asc' }],

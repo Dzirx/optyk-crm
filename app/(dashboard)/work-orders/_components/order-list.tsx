@@ -1,6 +1,6 @@
 'use client';
 
-import { SmsFailureCard } from '@/components/sms-failure-note';
+import { SmsFailureIcon } from '@/components/sms-failure-note';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { formatPhone } from '@/lib/phone';
 import { formatDateTimePadded } from '@/lib/time';
@@ -98,7 +98,7 @@ export function OrderList({
                   </td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-900">{order.customerName}</div>
-                    <div className="text-sm text-gray-500">{formatPhone(order.customerPhone)}</div>
+                    <div className="text-sm text-gray-500 whitespace-nowrap">{formatPhone(order.customerPhone)}</div>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-700">
                     {new Date(order.receivedAt).toLocaleDateString('pl-PL')}
@@ -121,7 +121,7 @@ export function OrderList({
                     {displayTotal(order)}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         onClick={() => onEdit(order)}
                         className="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded"
@@ -151,7 +151,7 @@ export function OrderList({
                         </span>
                       ) : (
                         order.reviewSmsStatus === 'failed' ? (
-                          <SmsFailureCard
+                          <SmsFailureIcon
                             kind="review"
                             title={t('reviewSmsFailed')}
                             failure={order.reviewSmsFailure}
@@ -166,6 +166,21 @@ export function OrderList({
                           </button>
                         )
                       )}
+                      <a
+                        href={`/work-orders/${order.id}/print`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={t('printWorkOrder')}
+                        aria-label={`${t('printWorkOrder')} ${order.orderNumber}`}
+                        className="inline-flex items-center px-2 py-1 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded"
+                      >
+                        {/* Ikona drukarki */}
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5" aria-hidden="true">
+                          <path d="M6 9V2h12v7" />
+                          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                          <rect x="6" y="14" width="12" height="8" />
+                        </svg>
+                      </a>
                     </div>
                   </td>
                 </tr>

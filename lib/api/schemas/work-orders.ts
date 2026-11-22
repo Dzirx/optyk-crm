@@ -1,14 +1,18 @@
 import { z } from 'zod';
-import { MONEY, ValidationError, optionalDate } from '@/lib/api/validation';
+import { MONEY, ValidationError, optionalDate, optionalNumber } from '@/lib/api/validation';
 import { fromValidator, optDate, optNum, pageParam, pageSizeParam, patchDate, patchNum, searchParam, text } from './common';
 
 const WORK_ORDER_STATUSES = ['pending', 'ready', 'completed'];
 
-/** Suma cen szkieł OP i OL w groszach (bez błędów zaokrągleń); null, gdy obu brak. */
-function lensPriceSum(op: number | null, ol: number | null): number | null {
+/** Suma cen szkieł OP × ilość + OL × ilość w groszach (bez błędów zaokrągleń); null, gdy obu cen brak. */
+function lensPriceSum(op: number | null, opQty: number, ol: number | null, olQty: number): number | null {
   if (op === null && ol === null) return null;
-  return (Math.round((op ?? 0) * 100) + Math.round((ol ?? 0) * 100)) / 100;
+  return (Math.round((op ?? 0) * 100) * opQty + Math.round((ol ?? 0) * 100) * olQty) / 100;
 }
+
+/** Ilość sztuk szkła/soczewki: pusta = 1, inaczej liczba całkowita 1–99. */
+const QTY = { min: 1, max: 99, integer: true };
+const qty = (label: string) => fromValidator((v) => optionalNumber(v, { label, ...QTY }) ?? 1);
 
 const BAD_ITEMS = 'Nieprawidłowe pozycje zlecenia';
 
@@ -46,6 +50,10 @@ const itemSchema = z.object(
     olLensName: fromValidator((v) => text(v, 255)),
     opLensPrice: optNum({ label: 'Cena szkła OP', ...MONEY }),
     olLensPrice: optNum({ label: 'Cena szkła OL', ...MONEY }),
+    opQty: qty('Ilość (OP)'),
+    olQty: qty('Ilość (OL)'),
+    serviceName: fromValidator((v) => text(v, 255)),
+    servicePrice: optNum({ label: 'Cena usługi', ...MONEY }),
     inventoryItemIdOp: inventoryId,
     inventoryItemIdOl: inventoryId,
     inventoryItemIdFrame: inventoryId,
@@ -56,8 +64,8 @@ const itemSchema = z.object(
   { error: BAD_ITEMS },
 ).transform((item) => ({
   ...item,
-  // Cena szkieł = OP + OL. Gdy nie ma żadnej ceny per oko (stare żądanie), zostaje podana lensPrice.
-  lensPrice: lensPriceSum(item.opLensPrice, item.olLensPrice) ?? item.lensPrice,
+  // Cena szkieł = OP × ilość + OL × ilość. Gdy nie ma żadnej ceny per oko (stare żądanie), zostaje podana lensPrice.
+  lensPrice: lensPriceSum(item.opLensPrice, item.opQty, item.olLensPrice, item.olQty) ?? item.lensPrice,
 }));
 
 const items = z.array(itemSchema, { error: BAD_ITEMS }).optional();

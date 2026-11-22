@@ -41,6 +41,11 @@ export const POST = withAccess(
         smsConfig: (body.smsConfig || null) as Prisma.InputJsonObject,
         reminderSmsTemplate: body.reminderSmsTemplate || null,
         reviewSmsTemplate: body.reviewSmsTemplate || null,
+        legalName: body.legalName?.trim() || null,
+        street: body.street?.trim() || null,
+        postalCode: body.postalCode?.trim() || null,
+        city: body.city?.trim() || null,
+        nip: body.nip?.trim() || null,
         ...(body.reminderWindowStart !== undefined && { reminderWindowStart: body.reminderWindowStart }),
         ...(body.reminderWindowEnd !== undefined && { reminderWindowEnd: body.reminderWindowEnd }),
         ...(body.autoReminders !== undefined && { autoReminders: body.autoReminders }),
@@ -59,6 +64,12 @@ export const PATCH = withAccess(
     if (!business) return NextResponse.json({ error: 'Nie znaleziono firmy' }, { status: 404 });
 
     const { name, phone, googleReviewUrl, smsProvider, smsConfig, reminderSmsTemplate, reviewSmsTemplate, reminderWindowStart, reminderWindowEnd, autoReminders } = body;
+    // Dane do wydruków: brak pola = bez zmiany, pusty tekst = wyczyść.
+    const printData = Object.fromEntries(
+      (['legalName', 'street', 'postalCode', 'city', 'nip'] as const)
+        .filter((k) => body[k] !== undefined)
+        .map((k) => [k, body[k]?.trim() || null]),
+    );
     // Okno sprawdzamy razem z zapisaną wartością drugiego końca.
     if ((reminderWindowStart ?? business.reminderWindowStart) >= (reminderWindowEnd ?? business.reminderWindowEnd)) {
       return NextResponse.json({ error: WINDOW_ORDER_ERROR }, { status: 400 });
@@ -76,6 +87,7 @@ export const PATCH = withAccess(
         ...(reminderWindowStart !== undefined && { reminderWindowStart }),
         ...(reminderWindowEnd !== undefined && { reminderWindowEnd }),
         ...(autoReminders !== undefined && { autoReminders }),
+        ...printData,
       },
     });
 

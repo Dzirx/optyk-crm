@@ -10,6 +10,11 @@ interface Business {
   name: string;
   phone: string | null;
   googleReviewUrl: string;
+  legalName: string | null;
+  street: string | null;
+  postalCode: string | null;
+  city: string | null;
+  nip: string | null;
   smsProvider: string;
   smsConfig: any;
   reminderWindowStart: number;
@@ -38,6 +43,11 @@ export default function SettingsPage() {
     name: '',
     phone: '',
     googleReviewUrl: '',
+    legalName: '',
+    street: '',
+    postalCode: '',
+    city: '',
+    nip: '',
     smsProvider: 'smsapi',
     smsConfig: {} as Record<string, string>,
     reminderSmsTemplate: '',
@@ -62,6 +72,11 @@ export default function SettingsPage() {
           name: data.business.name,
           phone: data.business.phone || '',
           googleReviewUrl: data.business.googleReviewUrl,
+          legalName: data.business.legalName || '',
+          street: data.business.street || '',
+          postalCode: data.business.postalCode || '',
+          city: data.business.city || '',
+          nip: data.business.nip || '',
           smsProvider: data.business.smsProvider || 'smsapi',
           smsConfig: data.business.smsConfig || {},
           reminderSmsTemplate: data.business.reminderSmsTemplate || '',
@@ -94,6 +109,11 @@ export default function SettingsPage() {
           name: formData.name,
           phone: formData.phone,
           googleReviewUrl: formData.googleReviewUrl,
+          legalName: formData.legalName,
+          street: formData.street,
+          postalCode: formData.postalCode,
+          city: formData.city,
+          nip: formData.nip,
           smsProvider: formData.smsProvider,
           smsConfig: formData.smsConfig,
           reminderSmsTemplate: formData.reminderSmsTemplate,
@@ -143,6 +163,11 @@ export default function SettingsPage() {
         name: '',
         phone: '',
         googleReviewUrl: '',
+        legalName: '',
+        street: '',
+        postalCode: '',
+        city: '',
+        nip: '',
         smsProvider: 'smsapi',
         smsConfig: {},
         reminderSmsTemplate: '',
@@ -251,6 +276,37 @@ export default function SettingsPage() {
                   </p>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Dane zakładu do wydruków */}
+        <div className="bg-white shadow sm:rounded-lg">
+          <div className="px-4 py-5 sm:p-6">
+            <h3 className="text-lg leading-6 font-medium text-gray-900">{t('printDetails')}</h3>
+            <p className="mt-2 text-sm text-gray-500">{t('printDetailsHelp')}</p>
+            <div className="mt-6 grid grid-cols-1 gap-y-6 gap-x-4 sm:grid-cols-6">
+              {([
+                { name: 'legalName', span: 'sm:col-span-6', placeholder: 'np. Zakład Optyczny Jan Kowalski' },
+                { name: 'street', span: 'sm:col-span-6', placeholder: 'np. ul. Lipowa 12/3' },
+                { name: 'postalCode', span: 'sm:col-span-2', placeholder: '00-000' },
+                { name: 'city', span: 'sm:col-span-4', placeholder: '' },
+                { name: 'nip', span: 'sm:col-span-3', placeholder: '' },
+              ] as const).map((field) => (
+                <div key={field.name} className={field.span}>
+                  <label htmlFor={field.name} className="block text-sm font-medium text-gray-700">
+                    {t(field.name)}
+                  </label>
+                  <input
+                    type="text"
+                    id={field.name}
+                    value={formData[field.name]}
+                    onChange={(e) => setFormData({ ...formData, [field.name]: e.target.value })}
+                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border text-gray-900 bg-white"
+                    placeholder={field.placeholder}
+                  />
+                </div>
+              ))}
             </div>
           </div>
         </div>

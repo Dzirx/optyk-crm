@@ -41,3 +41,22 @@ test('bez cen per oko liczy się stare lensPrice', () => {
 test('hasPrices widzi cenę per oko', () => {
   assert.equal(hasPrices([{ olLensPrice: '10' }]), true);
 });
+
+test('ilość szkieł/soczewek mnoży cenę za sztukę', () => {
+  assert.equal(itemTotal({ opLensPrice: '120', opQty: 2, olLensPrice: '120', olQty: 3 }), 600);
+  assert.equal(itemTotal({ opLensPrice: '120', opQty: '2', olLensPrice: '99.99' }), 339.99);
+});
+
+test('ilość: brak, 0, ujemna lub tekst = 1 sztuka', () => {
+  for (const q of [null, undefined, '', 0, -2, 'abc']) assert.equal(itemTotal({ opLensPrice: '50', opQty: q as never }), 50);
+});
+
+test('usługa (montaż) wliczana do sumy i do hasPrices', () => {
+  assert.equal(itemTotal({ framePrice: '400', opLensPrice: '250', olLensPrice: '250', servicePrice: '50' }), 950);
+  assert.equal(itemsTotal([{ servicePrice: '0.10' }, { servicePrice: '0.20' }]), 0.3);
+  assert.equal(hasPrices([{ servicePrice: '50' }]), true);
+});
+
+test('stare dane: lensPrice bez cen per oko nie jest mnożone przez ilość', () => {
+  assert.equal(itemTotal({ lensPrice: '300', opQty: 2 }), 300);
+});

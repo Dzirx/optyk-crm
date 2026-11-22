@@ -79,10 +79,6 @@ export function OrderFormModal({
       </div>
 
         <form onSubmit={onSubmit} className="flex-1 overflow-y-auto p-6 space-y-6">
-          {error && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded">{error}</div>
-          )}
-
           {/* Basic info */}
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
@@ -239,7 +235,13 @@ export function OrderFormModal({
           </div>
 
           {/* Actions */}
-          <div className="flex justify-end gap-3 pt-4 border-t sticky bottom-0 bg-white">
+          {/* Błąd jest w stałej stopce: formularz bywa przewinięty w dół, a góra okna jest wtedy niewidoczna. */}
+          <div className="flex flex-wrap items-center justify-end gap-3 pt-4 border-t sticky bottom-0 bg-white">
+            {error && (
+              <p role="alert" data-testid="order-form-error" className="mr-auto flex-1 basis-64 p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+                {error}
+              </p>
+            )}
             <button
               type="button"
               onClick={onClose}

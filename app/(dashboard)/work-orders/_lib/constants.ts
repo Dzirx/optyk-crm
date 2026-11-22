@@ -1,5 +1,6 @@
 import type { TranslationKey } from '@/lib/i18n/translations';
 import type { OrderedKey, PrescriptionField, Source } from './types';
+import { ADD_RANGE, CYL_RANGE, SPH_RANGE, type PowerRange } from '@/lib/work-orders/power';
 
 export const ORDERED_KEYS: OrderedKey[] = ['opOrdered', 'olOrdered', 'frameOrdered'];
 
@@ -26,14 +27,17 @@ function genOpts(from: number, to: number, step: number, decimals: number) {
   return opts;
 }
 
-export const SPH_OPTIONS = genOpts(-20, 20, 0.25, 2);
-export const CYL_OPTIONS = genOpts(-8, 8, 0.25, 2);
-export const ADD_OPTIONS = genOpts(0.25, 4, 0.25, 2);
 export const PD_OPTIONS  = genOpts(25, 40, 0.5, 1);
 
-export const FIELD_OPTIONS: Record<PrescriptionField, { value: string; label: string }[] | null> = {
-  opSph: SPH_OPTIONS, opCyl: CYL_OPTIONS, opAxis: null, opAdd: ADD_OPTIONS, opPd: PD_OPTIONS,
-  olSph: SPH_OPTIONS, olCyl: CYL_OPTIONS, olAxis: null, olAdd: ADD_OPTIONS, olPd: PD_OPTIONS,
+/** Pola mocy (SPH, CYL, ADD) — wpisywane z klawiatury albo wybierane z listy od 0,00 (PowerInput). */
+export const POWER_RANGES: Partial<Record<PrescriptionField, PowerRange>> = {
+  opSph: SPH_RANGE, opCyl: CYL_RANGE, opAdd: ADD_RANGE,
+  olSph: SPH_RANGE, olCyl: CYL_RANGE, olAdd: ADD_RANGE,
+};
+
+/** Pola z listą wartości (rozstaw źrenic). */
+export const FIELD_OPTIONS: Partial<Record<PrescriptionField, { value: string; label: string }[]>> = {
+  opPd: PD_OPTIONS, olPd: PD_OPTIONS,
 };
 
 export const SOURCE_OPTIONS: { value: Source; labelKey: TranslationKey }[] = [

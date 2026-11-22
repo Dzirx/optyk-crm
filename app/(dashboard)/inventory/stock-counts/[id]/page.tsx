@@ -62,6 +62,9 @@ function CountInput({ line, state, onChange, onSave, onFocus, onBlurField, nextF
 }) {
   const { t } = useLanguage();
   const status = state.status;
+  // Kliknięcie zaznacza całą liczbę, więc wpisana wartość ją zastępuje (a nie dopisuje: „14” + „13” ≠ 1413).
+  // Puszczenie przycisku myszy po fokusie zdjęłoby zaznaczenie, dlatego pierwsze mouseup jest pomijane.
+  const justFocused = useRef(false);
   return (
     <div>
     <div className="flex items-center gap-2">
@@ -76,8 +79,10 @@ function CountInput({ line, state, onChange, onSave, onFocus, onBlurField, nextF
         aria-label={`${t('stockCountCountedQty')}: ${line.name}`}
         value={state.text}
         onChange={(e) => onChange(line.id, e.target.value)}
-        onFocus={() => onFocus(line.id)}
+        onFocus={(e) => { e.currentTarget.select(); justFocused.current = true; onFocus(line.id); }}
+        onMouseUp={(e) => { if (justFocused.current) { e.preventDefault(); justFocused.current = false; } }}
         onBlur={() => {
+          justFocused.current = false;
           onSave(line.id);
           onBlurField(line.id);
         }}

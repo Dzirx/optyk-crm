@@ -100,6 +100,8 @@ export default function WorkOrdersPage() {
 
 
   function openAdd() {
+    // Stany w „Wybierz z magazynu” muszą być aktualne (inne zlecenia mogły pobrać towar).
+    fetchInventory();
     setEditingOrder(null);
     setForm(emptyForm());
     setTotalManual(false);
@@ -112,6 +114,7 @@ export default function WorkOrdersPage() {
 
 
   function openEdit(order: WorkOrder) {
+    fetchInventory();
     setEditingOrder(order);
     // Zapisana kwota różna od sumy pozycji = była wpisana ręcznie, więc jej nie nadpisujemy.
     setTotalManual(
@@ -126,6 +129,7 @@ export default function WorkOrdersPage() {
 
   function closeModal() {
     setShowModal(false);
+    setError('');
     setEditingOrder(null);
     setCustomerSearch('');
     setShowNewCustomerForm(false);
@@ -161,6 +165,11 @@ export default function WorkOrdersPage() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
         customerId = data.customer.id;
+        // Klient już istnieje: gdy zapis zlecenia się nie uda, ponowne „Utwórz” nie założy go drugi raz.
+        setForm(prev => ({ ...prev, customerId }));
+        setSelectedCustomerName(`${data.customer.name} ${data.customer.surname}`.trim());
+        setShowNewCustomerForm(false);
+        setNewCustomer(emptyNewCustomer());
       }
 
       if (!customerId) { setError(t('pleaseSelectCustomer')); setSubmitting(false); return; }
@@ -177,6 +186,7 @@ export default function WorkOrdersPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       await fetchWorkOrders();
+      fetchInventory();
       closeModal();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error');
@@ -211,6 +221,7 @@ export default function WorkOrdersPage() {
       const res = await fetch(`/api/work-orders/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error();
       await fetchWorkOrders();
+      fetchInventory(); // usunięcie oddaje towar na stan
     } catch {
       setError('Failed to delete work order');
     }
@@ -234,7 +245,8 @@ export default function WorkOrdersPage() {
         </button>
       </div>
 
-      {error && (
+      {/* Przy otwartym oknie zlecenia błąd jest w oknie, a nie pod nim. */}
+      {error && !showModal && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg">{error}</div>
       )}
 

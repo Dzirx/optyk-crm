@@ -69,6 +69,13 @@ model Business {
   phone           String? @db.VarChar(20)
   googleReviewUrl String  @map("google_review_url") @db.Text
 
+  // Dane zakładu do wydruków (RODO — administrator danych, odcinek dla klienta). Zgodne z CEIDG.
+  legalName  String? @map("legal_name") @db.VarChar(255)
+  street     String? @db.VarChar(255)
+  postalCode String? @map("postal_code") @db.VarChar(10)
+  city       String? @db.VarChar(100)
+  nip        String? @db.VarChar(20)
+
   // SMS Provider Configuration
   smsProvider String? @default("smsapi") @map("sms_provider") @db.VarChar(50)
   smsConfig   Json?   @map("sms_config")
@@ -219,6 +226,14 @@ model WorkOrderItem {
   olLensName  String?  @map("ol_lens_name") @db.VarChar(255)
   opLensPrice Decimal? @map("op_lens_price") @db.Decimal(10, 2)
   olLensPrice Decimal? @map("ol_lens_price") @db.Decimal(10, 2)
+  // Ilość szkieł/soczewek dla oka (np. 2 opakowania soczewek). Cena OP/OL to cena za sztukę,
+  // a lensPrice = opLensPrice × opQty + olLensPrice × olQty. Z magazynu schodzi tyle sztuk.
+  opQty Int @default(1) @map("op_qty")
+  olQty Int @default(1) @map("ol_qty")
+
+  // Usługa (np. montaż szkieł w oprawce) — osobna cena wliczana do sumy pozycji.
+  serviceName  String?  @map("service_name") @db.VarChar(255)
+  servicePrice Decimal? @map("service_price") @db.Decimal(10, 2)
 
   // Magazyn (per oko + oprawka)
   inventoryItemIdOp    String? @map("inventory_item_id_op") @db.Uuid
