@@ -3,6 +3,8 @@ import styles from './print.module.css';
 import { itemsTotal, hasPrices } from '@/lib/work-orders/totals';
 import { formatPhone } from '@/lib/phone';
 import { formatPln } from '@/lib/money';
+import { businessAddress, businessLegalName } from '@/lib/business-details';
+import { qtyOf } from '@/lib/work-orders/totals';
 
 type WorkOrderWithRelations = WorkOrder & {
   customer: Customer;
@@ -100,6 +102,12 @@ function RxTable({ item }: { item: WorkOrderItem }) {
   );
 }
 
+/** Nazwa z ceną: „Hoya 1.6 (2 × 120,00 zł)” albo „Hoya 1.6 (120,00 zł)”. */
+function priced(name: string, unit: number | null, qty = 1): string {
+  if (unit == null) return name;
+  return `${name} (${qty > 1 ? `${qty} × ` : ''}${formatMoney(unit)})`;
+}
+
 function ItemBlock({ item }: { item: WorkOrderItem }) {
   const contact = item.type === 'soczewki_kontaktowe';
   const framePrice = toNumber(item.framePrice);
@@ -108,6 +116,9 @@ function ItemBlock({ item }: { item: WorkOrderItem }) {
   const opName = hasPerEye ? item.opLensName : item.lensType;
   const opPrice = toNumber(hasPerEye ? item.opLensPrice : item.lensPrice);
   const olPrice = toNumber(item.olLensPrice);
+  const opQty = hasPerEye ? qtyOf(item.opQty) : 1;
+  const olQty = qtyOf(item.olQty);
+  const servicePrice = toNumber(item.servicePrice);
   const lensName = contact ? 'Soczewka' : 'Szkło';
 
   return (
@@ -115,160 +126,164 @@ function ItemBlock({ item }: { item: WorkOrderItem }) {
       <p className={styles.itemTitle}>{ITEM_TYPE_LABELS[item.type] ?? item.type}</p>
       {!contact && <RxTable item={item} />}
       <div className={styles.itemDetails}>
-        {(opName || opPrice != null) && (
-          <span>
-            {lensName} OP: {opName || '—'}
-            {opPrice != null && ` (${formatMoney(opPrice)})`}
-          </span>
-        )}
-        {(item.olLensName || olPrice != null) && (
-          <span>
-            {lensName} OL: {item.olLensName || '—'}
-            {olPrice != null && ` (${formatMoney(olPrice)})`}
-          </span>
-        )}
+        {(opName || opPrice != null) && <span>{lensName} OP: {priced(opName || '—', opPrice, opQty)}</span>}
+        {(item.olLensName || olPrice != null) && <span>{lensName} OL: {priced(item.olLensName || '—', olPrice, olQty)}</span>}
         {!contact && (item.ownFrame || item.frameModel || framePrice != null) && (
-          <span>
-            Oprawka: {item.ownFrame ? 'własna klienta' : item.frameModel || '—'}
-            {framePrice != null && ` (${formatMoney(framePrice)})`}
-          </span>
+          <span>Oprawka: {priced(item.ownFrame ? 'własna klienta' : item.frameModel || '—', framePrice)}</span>
+        )}
+        {!contact && (item.serviceName || servicePrice != null) && (
+          <span>Usługa: {priced(item.serviceName || 'Montaż', servicePrice)}</span>
         )}
       </div>
     </div>
   );
 }
 
-function OrderFormHalf({ workOrder }: { workOrder: WorkOrderWithRelations }) {
-  const total = orderTotal(workOrder);
-  const deposit = toNumber(workOrder.deposit);
-  const toPay = total != null ? total - (deposit ?? 0) : null;
-
+/** Linia cięcia — na obu stronach na tej samej wysokości (50 mm od dołu kartki). */
+function CutLine() {
   return (
-    <div className={styles.half}>
-      <div className={styles.row}>
-        <Field label="Data przyjęcia" value={formatDate(workOrder.receivedAt)} />
-        <Field label="Data odbioru" value={formatDate(workOrder.pickupDate)} />
-        <Field label="Nr zlecenia" value={workOrder.orderNumber} />
-      </div>
-
-      <div className={styles.row}>
-        <Field
-          label="Nazwisko i imię"
-          value={`${workOrder.customer.name} ${workOrder.customer.surname}`}
-          grow
-        />
-        <Field label="Nr tel." value={formatPhone(workOrder.customer.phone)} />
-      </div>
-
-      {workOrder.items.map(item => (
-        <ItemBlock key={item.id} item={item} />
-      ))}
-
-      <div className={styles.priceSummary}>
-        <Field label="Suma" value={formatMoney(total)} />
-        <Field label="Zaliczka / zadatek" value={deposit != null ? `- ${formatMoney(deposit)}` : ''} />
-        <Field label="Do zapłaty" value={formatMoney(toPay)} strong />
-      </div>
-
-      <div className={styles.notesBox}>
-        <p className={styles.notesBoxLabel}>Zalecenia i uwagi</p>
-        <p className={styles.notesText}>{workOrder.notes || ''}</p>
-      </div>
-
-      <div className={styles.consentBlock}>
-        <p className={styles.consentTitle}>☐ Zgoda na przetwarzanie danych osobowych</p>
-        <p className={styles.smallPrint}>
-          Wyrażam zgodę na przetwarzanie moich danych osobowych w celu realizacji niniejszego zlecenia. Zapoznałem/-am
-          się z informacją o przetwarzaniu danych osobowych zamieszczoną na drugiej stronie niniejszego dokumentu.
-        </p>
-        <div className={styles.signatureLine}>Podpis zleceniodawcy</div>
-      </div>
-
-      <div className={styles.consentBlock}>
-        <p className={styles.consentTitle}>Potwierdzenie odbioru okularów</p>
-        <p className={styles.smallPrint}>
-          Potwierdzam odbiór zamówienia zgodnego ze złożonym zleceniem. Zapoznałem/-am się z warunkami gwarancji i
-          użytkowania okularów zamieszczonymi na drugiej stronie niniejszego dokumentu.
-        </p>
-        <div className={styles.signatureLine}>Podpis zleceniodawcy</div>
-      </div>
-
-      <div className={styles.signatureLine}>Podpis i pieczęć wytwórcy / zleceniobiorcy</div>
-
-      <div className={styles.footerRow}>
-        <p className={styles.footerTagline}>Dziękujemy za zaufanie. Zapraszamy ponownie!</p>
-        <p className={styles.footerNote}>* niepotrzebne skreślić</p>
-      </div>
+    <div className={styles.cutLine}>
+      <span>✂ linia cięcia</span>
     </div>
   );
 }
 
-function InfoHalf({ workOrder, business }: { workOrder: WorkOrderWithRelations; business: Business }) {
+/** Strona I: zlecenie, a pod linią cięcia odcinek dla klienta. */
+function FrontPage({ workOrder, business }: { workOrder: WorkOrderWithRelations; business: Business }) {
   const total = orderTotal(workOrder);
   const deposit = toNumber(workOrder.deposit);
   const toPay = total != null ? total - (deposit ?? 0) : null;
+  const address = businessAddress(business);
 
   return (
-    <div className={`${styles.half} ${styles.stubHalf}`}>
-      <div className={styles.stub}>
-        <p className={styles.stubTitle}>Odcinek dla klienta</p>
-        {business.name && <p className={styles.stubBusiness}>{business.name}</p>}
+    <div className={styles.page}>
+      <div className={styles.main}>
+        <div className={styles.docHeader}>
+          <span className={styles.docTitle}>Umowa – zlecenie</span>
+          <span className={styles.docBusiness}>{business.name}</span>
+        </div>
 
         <div className={styles.row}>
           <Field label="Nr zlecenia" value={workOrder.orderNumber} strong />
-          <Field label="Data odbioru" value={formatDate(workOrder.pickupDate)} strong />
-        </div>
-        <div className={styles.row}>
-          <Field
-            label="Klient"
-            value={`${workOrder.customer.name} ${workOrder.customer.surname}`}
-            grow
-          />
-          <Field label="Telefon" value={formatPhone(workOrder.customer.phone)} />
-        </div>
-        <div className={styles.row}>
           <Field label="Data przyjęcia" value={formatDate(workOrder.receivedAt)} />
-          <Field label="Zaliczka wpłacona" value={deposit != null ? formatMoney(deposit) : '—'} />
-        </div>
-        <div className={styles.row}>
-          <Field label="Do zapłaty przy odbiorze" value={formatMoney(toPay)} strong />
+          <Field label="Data odbioru" value={formatDate(workOrder.pickupDate)} />
         </div>
 
-        <p className={styles.stubNote}>Prosimy o zachowanie odcinka i okazanie go przy odbiorze zamówienia.</p>
+        <div className={styles.row}>
+          <Field label="Nazwisko i imię" value={`${workOrder.customer.name} ${workOrder.customer.surname}`} grow />
+          <Field label="Nr tel." value={formatPhone(workOrder.customer.phone)} />
+        </div>
+
+        {workOrder.items.map(item => (
+          <ItemBlock key={item.id} item={item} />
+        ))}
+
+        <div className={styles.priceSummary}>
+          <Field label="Suma" value={formatMoney(total)} />
+          <Field label="Zaliczka / zadatek" value={deposit != null ? `- ${formatMoney(deposit)}` : ''} />
+          <Field label="Do zapłaty" value={formatMoney(toPay)} strong />
+        </div>
+
+        <div className={styles.notesBox}>
+          <p className={styles.notesBoxLabel}>Zalecenia i uwagi</p>
+          <p className={styles.notesText}>{workOrder.notes || ''}</p>
+        </div>
+
+        <div className={styles.consentBlock}>
+          <p className={styles.consentTitle}>☐ Zgoda na przetwarzanie danych osobowych</p>
+          <p className={styles.smallPrint}>
+            Wyrażam zgodę na przetwarzanie moich danych osobowych w celu realizacji niniejszego zlecenia.
+            Zapoznałem/-am się z informacją o przetwarzaniu danych osobowych zamieszczoną na odwrocie.
+          </p>
+        </div>
+
+        <div className={styles.signatures}>
+          <div className={styles.signatureLine}>Podpis zleceniodawcy</div>
+          <div className={styles.signatureLine}>Podpis i pieczęć zleceniobiorcy</div>
+        </div>
+      </div>
+
+      <CutLine />
+
+      <div className={styles.stub}>
+        <div className={styles.stubBusiness}>
+          <p className={styles.stubTitle}>Odcinek dla klienta</p>
+          <p>
+            <strong>{business.name}</strong>
+            {address && <><br />{address}</>}
+            {business.phone && <><br />tel. {formatPhone(business.phone)}</>}
+          </p>
+          <p className={styles.stubNote}>Prosimy o zachowanie odcinka i okazanie go przy odbiorze zamówienia.</p>
+        </div>
+        <div className={styles.stubFields}>
+          <div className={styles.row}>
+            <Field label="Nr zlecenia" value={workOrder.orderNumber} strong />
+            <Field label="Data odbioru" value={formatDate(workOrder.pickupDate)} strong />
+          </div>
+          <div className={styles.row}>
+            <Field label="Klient" value={`${workOrder.customer.name} ${workOrder.customer.surname}`} grow />
+            <Field label="Data przyjęcia" value={formatDate(workOrder.receivedAt)} />
+          </div>
+          <div className={styles.row}>
+            <Field label="Zaliczka wpłacona" value={deposit != null ? formatMoney(deposit) : '—'} />
+            <Field label="Do zapłaty przy odbiorze" value={formatMoney(toPay)} strong />
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function UsageHalf({ business }: { business: Business }) {
+/** Strona II (odwrocie): RODO, instrukcja użytkowania, gwarancja — tylko nad linią cięcia. */
+function BackPage({ business }: { business: Business }) {
+  const address = businessAddress(business);
   return (
-    <div className={`${styles.half} ${styles.legal}`}>
-      <h2>Jak korzystać z okularów</h2>
+    <div className={styles.page}>
+      <div className={`${styles.main} ${styles.legal}`}>
+        <h2>Informacje o przetwarzaniu danych osobowych</h2>
+        <p>
+          I. Administratorem danych osobowych jest {businessLegalName(business)}
+          {address && `, ${address}`}
+          {business.nip && `, NIP ${business.nip}`}.
+        </p>
+        <p>II. Dane osobowe są przetwarzane wyłącznie w celu realizacji niniejszego zlecenia, zgodnie z RODO.</p>
 
-      <h3>Pielęgnacja i użytkowanie</h3>
-      <ul>
-        <li>Do czyszczenia soczewek używaj wyłącznie wody i szmatki z mikrofibry — unikaj suchego ścierania.</li>
-        <li>Nie zostawiaj okularów w wysokiej temperaturze (np. na desce rozdzielczej samochodu).</li>
-        <li>Przechowuj okulary w etui, gdy z nich nie korzystasz.</li>
-        <li>W razie niewygody lub złego dopasowania oprawy zgłoś się do salonu — regulacja jest bezpłatna.</li>
-      </ul>
+        <h2>Instrukcja użytkowania</h2>
+        <ol>
+          <li>Okulary należy używać zgodnie z zaleceniami specjalisty (do dali, bliży, stałego lub czasowego użytku).</li>
+          <li>Należy je chronić przed działaniem wysokich temperatur (np. nie zostawiać na podszybiu w samochodzie).</li>
+          <li>
+            Do czyszczenia należy używać ściereczek i preparatów do tego przeznaczonych, nie czyścić na sucho lub za
+            pomocą silnych środków chemicznych.
+          </li>
+          <li>
+            Zakładać i zdejmować dwiema rękami, nie należy ich pożyczać innym osobom — są dobierane i wykonywane
+            z uwzględnieniem indywidualnych parametrów.
+          </li>
+          <li>Wszelkich napraw, regulacji i konserwacji należy dokonywać w zakładzie optycznym.</li>
+          <li>Nienoszone okulary należy przechowywać w futerale.</li>
+        </ol>
 
-      <h3>Gwarancja</h3>
-      <ul>
-        <li>12 miesięcy gwarancji od daty odbioru okularów (data odbioru — patrz odcinek dla klienta).</li>
-        <li>Gwarancja nie obejmuje uszkodzeń mechanicznych powstałych z winy użytkownika.</li>
-        <li>Przy reklamacji konieczne jest okazanie niniejszego dokumentu zlecenia.</li>
-      </ul>
+        <h2>Gwarancja</h2>
+        <p className={styles.legalLead}>
+          Gwarantujemy najwyższą jakość, trwałość oraz satysfakcję z użytkowania Państwa okularów korekcyjnych.
+        </p>
+        <ol>
+          <li>Na wykonane okulary udzielana jest gwarancja na okres 24 miesiące od daty odbioru.</li>
+          <li>
+            Gwarancja nie obejmuje uszkodzeń mechanicznych typu złamania, zarysowania, uszkodzeń powłok oraz
+            deformacji np. pod wpływem nacisku, wysokich temperatur lub samodzielnie dokonywanych napraw.
+          </li>
+          <li>Podstawą do złożenia reklamacji jest posiadanie niniejszego dowodu zakupu.</li>
+        </ol>
+        <p className={styles.medical}>
+          Okulary korekcyjne są wyrobem medycznym — używaj ich zgodnie z instrukcją lub etykietą.
+        </p>
+      </div>
 
-      <p className={styles.smallPrint}>
-        Dane osobowe są przetwarzane przez {business.name || 'salon optyczny'} wyłącznie w celu realizacji
-        niniejszego zlecenia, zgodnie z RODO.
-      </p>
-
-      <p className={styles.disclaimer}>
-        Uwaga: treści dot. gwarancji i RODO to wzór — przed użyciem w kontakcie z klientami zweryfikuj je z radcą
-        prawnym lub inspektorem ochrony danych.
-      </p>
+      <CutLine />
+      {/* Odwrocie odcinka dla klienta zostaje puste. */}
+      <div className={styles.stub} />
     </div>
   );
 }
@@ -282,21 +297,8 @@ export function WorkOrderPrintSheet({
 }) {
   return (
     <>
-      <div className={styles.page}>
-        <OrderFormHalf workOrder={workOrder} />
-        <div className={styles.spine}>
-          <span>UMOWA – ZLECENIE</span>
-        </div>
-        <InfoHalf workOrder={workOrder} business={business} />
-      </div>
-
-      <div className={styles.page}>
-        <UsageHalf business={business} />
-        <div className={styles.spine}>
-          <span>UMOWA – ZLECENIE</span>
-        </div>
-        <div className={styles.half} />
-      </div>
+      <FrontPage workOrder={workOrder} business={business} />
+      <BackPage business={business} />
     </>
   );
 }

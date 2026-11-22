@@ -1,4 +1,4 @@
-import { itemsTotal, hasPrices } from '@/lib/work-orders/totals';
+import { itemsTotal, hasPrices, qtyOf } from '@/lib/work-orders/totals';
 import { formatPln } from '@/lib/money';
 import type { TranslationKey } from '@/lib/i18n/translations';
 import { ORDERED_KEYS, SOURCE_OPTIONS } from './constants';
@@ -12,6 +12,9 @@ export const ELEMENT_FIELDS = {
   ol: { name: 'olLensName', price: 'olLensPrice', inv: 'inventoryItemIdOl', ordered: 'olOrdered', source: 'olSource' },
   frame: { name: 'frameModel', price: 'framePrice', inv: 'inventoryItemIdFrame', ordered: 'frameOrdered', source: 'frameSource' },
 } as const satisfies Record<Element, Record<string, keyof WorkOrderItem>>;
+
+/** Pole ilości sztuk dla szkła OP i OL (oprawka nie ma ilości). */
+export const QTY_FIELD = { op: 'opQty', ol: 'olQty' } as const satisfies Record<'op' | 'ol', keyof WorkOrderItem>;
 
 type SourceInput = {
   name: string; price: string; inv: string; ordered: boolean; own?: boolean;
@@ -43,7 +46,7 @@ export function clearedElement(el: Element): Partial<WorkOrderItem> {
   const f = ELEMENT_FIELDS[el];
   return {
     [f.name]: '', [f.price]: '', [f.inv]: '', [f.ordered]: false, [f.source]: 'none',
-    ...(el === 'frame' ? { ownFrame: false } : {}),
+    ...(el === 'frame' ? { ownFrame: false } : { [QTY_FIELD[el]]: '1' }),
   } as Partial<WorkOrderItem>;
 }
 
@@ -101,6 +104,16 @@ export function selectableInventory(items: InventoryItem[], currentId: string): 
   return items.filter(i => i.quantity > 0 || i.id === currentId);
 }
 
+/**
+ * Kategoria magazynu, na której otwiera się lista „Wybierz z magazynu” dla elementu
+ * (oprawka → „Oprawki”, szkło → „Szkła”, soczewka → „Soczewki…”). Kategorie wpisuje salon,
+ * więc szukamy po początku słowa. Brak pasującej kategorii = lista bez filtra.
+ */
+export function preferredCategory(el: Element, contact: boolean, categories: string[]): string {
+  const re = el === 'frame' ? /^oprawk/i : contact ? /^soczew/i : /^szk[łl]/i;
+  return categories.find(c => re.test(c.trim())) ?? '';
+}
+
 export function formatInvLabel(inv: InventoryItem) {
   const parts: string[] = [];
   if (inv.sph != null) parts.push(`SPH: ${Number(inv.sph) > 0 ? '+' : ''}${Number(inv.sph).toFixed(2)}`);
@@ -134,6 +147,7 @@ export function emptyItem(): WorkOrderItem {
     olSph: '', olCyl: '', olAxis: '', olAdd: '', olPd: '',
     frameModel: '', ownFrame: false, lensType: '', framePrice: '', lensPrice: '',
     opLensName: '', olLensName: '', opLensPrice: '', olLensPrice: '',
+    opQty: '1', olQty: '1', serviceName: '', servicePrice: '',
     inventoryItemIdOp: '', inventoryItemIdOl: '', inventoryItemIdFrame: '',
     opOrdered: false, olOrdered: false, frameOrdered: false,
     opSource: 'none', olSource: 'none', frameSource: 'none',
@@ -195,6 +209,8 @@ function itemToForm(i: WorkOrderItem): WorkOrderItem {
     // lensType i lensPrice liczy serwer z pól per oko — formularz ich nie wysyła.
     lensType: '', lensPrice: '',
     opLensName, olLensName: i.olLensName ?? '', opLensPrice, olLensPrice: i.olLensPrice ?? '',
+    opQty: i.opQty != null ? String(i.opQty) : '1', olQty: i.olQty != null ? String(i.olQty) : '1',
+    serviceName: i.serviceName ?? '', servicePrice: i.servicePrice ?? '',
     inventoryItemIdOp: i.inventoryItemIdOp ?? '', inventoryItemIdOl: i.inventoryItemIdOl ?? '', inventoryItemIdFrame: i.inventoryItemIdFrame ?? '',
     opOrdered: i.opOrdered ?? false, olOrdered: i.olOrdered ?? false, frameOrdered: i.frameOrdered ?? false,
   };
@@ -227,10 +243,18 @@ export function previewElements(item: WorkOrderItem, t: (key: TranslationKey) =>
     const sourceLabel = t(SOURCE_OPTIONS.find(o => o.value === source)!.labelKey);
     const name = f[fields.name];
     const price = f[fields.price];
+    const qty = el === 'frame' ? 1 : qtyOf(f[QTY_FIELD[el]]);
     rows.push({
       label,
-      text: source === 'own' ? sourceLabel : `${name || '—'} (${sourceLabel})`,
-      price: price !== '' ? Number(price).toFixed(2) : '',
+      text: (source === 'own' ? sourceLabel : `${name || '—'} (${sourceLabel})`) + (qty > 1 ? ` × ${qty}` : ''),
+      price: price !== '' ? (Number(price) * qty).toFixed(2) : '',
+    });
+  }
+  if (!contact && (f.serviceName || f.servicePrice !== '')) {
+    rows.push({
+      label: t('service'),
+      text: f.serviceName || t('serviceDefault'),
+      price: f.servicePrice !== '' ? Number(f.servicePrice).toFixed(2) : '',
     });
   }
   return rows;

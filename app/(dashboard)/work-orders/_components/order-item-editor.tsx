@@ -1,7 +1,9 @@
 'use client';
 
 import { useLanguage } from '@/lib/i18n/language-context';
-import { ADD_OPTIONS, FIELD_OPTIONS, ITEM_TYPES } from '../_lib/constants';
+import { FIELD_OPTIONS, ITEM_TYPES, POWER_RANGES } from '../_lib/constants';
+import { ADD_RANGE } from '@/lib/work-orders/power';
+import { PowerInput } from '@/components/power-input';
 import type {
   InventoryItem, PrescriptionField, SetItemField, SetItemFields, WorkOrderItem,
 } from '../_lib/types';
@@ -18,7 +20,9 @@ interface OrderItemEditorProps {
   onRemove: (index: number) => void;
 }
 
-/** Jedna komórka recepty: lista wartości albo pole liczbowe (oś). */
+const CELL = 'w-full border border-gray-200 rounded px-1 py-1 text-center text-sm text-gray-900 focus:ring-1 focus:ring-blue-400';
+
+/** Jedna komórka recepty: moc (wpisywana lub z listy od 0,00), lista wartości (PD) albo pole liczbowe (oś). */
 function PrescriptionCell({ field, item, idx, setItemField }: {
   field: PrescriptionField;
   item: WorkOrderItem;
@@ -26,9 +30,12 @@ function PrescriptionCell({ field, item, idx, setItemField }: {
   setItemField: SetItemField;
 }) {
   const options = FIELD_OPTIONS[field];
+  const range = POWER_RANGES[field];
   return (
     <td className="px-1 py-1">
-      {options ? (
+      {range ? (
+        <PowerInput value={item[field]} onChange={v => setItemField(idx, field, v)} range={range} label={`${field.slice(2).toUpperCase()} ${field.slice(0, 2).toUpperCase()}`} className={CELL} />
+      ) : options ? (
         <select
           value={item[field]}
           onChange={e => setItemField(idx, field, e.target.value)}
@@ -65,9 +72,10 @@ export function OrderItemEditor({
             onChange={e => {
               const type = e.target.value;
               // Soczewki kontaktowe nie mają oprawki: czyścimy ją, żeby nie pobierała towaru z magazynu.
-              if (type === 'soczewki_kontaktowe' && item.frameSource !== 'none') {
+              // Montażu też nie ma, więc usługa znika (inaczej jej cena zostałaby w sumie).
+              if (type === 'soczewki_kontaktowe' && (item.frameSource !== 'none' || item.serviceName || item.servicePrice)) {
                 setMultipleItemFields(idx, {
-                  type, ...clearedElement('frame'),
+                  type, ...clearedElement('frame'), serviceName: '', servicePrice: '',
                 });
               } else {
                 setItemField(idx, 'type', type);
@@ -123,7 +131,7 @@ export function OrderItemEditor({
               </tbody>
             </table>
           </div>
-          {/* Do Blizy (Add) */}
+          {/* Do bliży (Add) */}
           <div className="overflow-x-auto">
             <p className="text-xs font-semibold text-green-700 mb-1 uppercase tracking-wide">{t('prescriptionNearLabel')}</p>
             <table className="w-full text-sm">
@@ -137,31 +145,15 @@ export function OrderItemEditor({
                 <tr>
                   <td className="px-2 py-1 text-xs font-medium text-gray-700 whitespace-nowrap">{t('okoPrawe')}</td>
                   <td className="px-1 py-1 w-24">
-                    <select
-                      value={item.opAdd}
-                      onChange={e => setItemField(idx, 'opAdd', e.target.value)}
-                      className="w-full border border-gray-200 rounded px-1 py-1 text-center text-sm text-gray-900 focus:ring-1 focus:ring-green-400"
-                    >
-                      <option value="">—</option>
-                      {ADD_OPTIONS.map(o => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
+                    <PowerInput value={item.opAdd} onChange={v => setItemField(idx, 'opAdd', v)} range={ADD_RANGE} label="ADD OP"
+                      className="w-full border border-gray-200 rounded px-1 py-1 text-center text-sm text-gray-900 focus:ring-1 focus:ring-green-400" />
                   </td>
                 </tr>
                 <tr>
                   <td className="px-2 py-1 text-xs font-medium text-gray-700 whitespace-nowrap">{t('okoLewe')}</td>
                   <td className="px-1 py-1 w-24">
-                    <select
-                      value={item.olAdd}
-                      onChange={e => setItemField(idx, 'olAdd', e.target.value)}
-                      className="w-full border border-gray-200 rounded px-1 py-1 text-center text-sm text-gray-900 focus:ring-1 focus:ring-green-400"
-                    >
-                      <option value="">—</option>
-                      {ADD_OPTIONS.map(o => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
+                    <PowerInput value={item.olAdd} onChange={v => setItemField(idx, 'olAdd', v)} range={ADD_RANGE} label="ADD OL"
+                      className="w-full border border-gray-200 rounded px-1 py-1 text-center text-sm text-gray-900 focus:ring-1 focus:ring-green-400" />
                   </td>
                 </tr>
               </tbody>

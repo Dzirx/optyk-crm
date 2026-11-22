@@ -9,19 +9,9 @@ import { formatPln } from '@/lib/money';
 import { DeliveryModal } from './_components/delivery-modal';
 import { HistoryModal } from './_components/history-modal';
 import { CorrectionModal } from './_components/correction-modal';
+import { PowerInput } from '@/components/power-input';
+import { CYL_RANGE, SPH_RANGE } from '@/lib/work-orders/power';
 
-function genOpts(from: number, to: number, step: number, decimals: number) {
-  const opts: { value: string; label: string }[] = [];
-  for (let v = from; v <= to + step / 2; v += step) {
-    const r = Math.round(v * 1000) / 1000;
-    const fixed = r.toFixed(decimals);
-    opts.push({ value: fixed, label: r > 0 ? `+${fixed}` : fixed });
-  }
-  return opts;
-}
-
-const SPH_OPTIONS = genOpts(-20, 20, 0.25, 2);
-const CYL_OPTIONS = genOpts(-8, 8, 0.25, 2);
 const DIAMETER_OPTIONS = ['50.0', '55.0', '60.0', '65.0', '70.0', '75.0', '80.0'];
 
 interface InventoryItem {
@@ -398,25 +388,25 @@ export default function InventoryPage() {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">SPH</label>
-                  <select
+                  {/* Jak w zleceniu: lista od 0,00 (plusy u góry, minusy u dołu) albo wpisanie z klawiatury („-125”, „-1,25”). */}
+                  <PowerInput
                     value={form.sph}
-                    onChange={e => setForm(f => ({ ...f, sph: e.target.value }))}
-                    className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
-                  >
-                    <option value="">—</option>
-                    {SPH_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
+                    onChange={v => setForm(f => ({ ...f, sph: v }))}
+                    range={SPH_RANGE}
+                    label="SPH"
+                    className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm text-center"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">CYL</label>
-                  <select
+                  {/* Jak w zleceniu: lista od 0,00 (plusy u góry, minusy u dołu) albo wpisanie z klawiatury („-125”, „-1,25”). */}
+                  <PowerInput
                     value={form.cyl}
-                    onChange={e => setForm(f => ({ ...f, cyl: e.target.value }))}
-                    className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
-                  >
-                    <option value="">—</option>
-                    {CYL_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
+                    onChange={v => setForm(f => ({ ...f, cyl: v }))}
+                    range={CYL_RANGE}
+                    label="CYL"
+                    className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm text-center"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('diameter')} (mm)</label>

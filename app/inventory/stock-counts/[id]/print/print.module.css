@@ -82,7 +82,12 @@
 .business {
   font-size: 12px;
   font-weight: 600;
-  margin: 0 0 1mm;
+  margin: 0;
+}
+
+.businessDetails {
+  font-size: 10.5px;
+  margin: 0.5mm 0 1mm;
 }
 
 .meta {

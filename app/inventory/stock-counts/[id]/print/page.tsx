@@ -6,6 +6,7 @@ import { formatCountDate, formatMoney, formatMoneyCents } from '@/lib/stock-coun
 import { parsePriceBasis, valueCents } from '@/lib/stock-count/math';
 import { StockCountError, loadStockCount, priceOf, sortByName } from '@/lib/stock-count/service';
 import { formatPhone } from '@/lib/phone';
+import { businessAddress, businessLegalName } from '@/lib/business-details';
 import { formatDateTimePl } from '@/lib/time';
 import { pozycjePl } from '@/lib/plural';
 import { PrintToolbar } from './print-toolbar';
@@ -54,10 +55,16 @@ export default async function StockCountPrintPage({
           <h1 className={styles.title}>
             Arkusz spisu z natury{draft && <span className={styles.draft}> — PROJEKT</span>}
           </h1>
-          <p className={styles.business}>
-            {business.name}
-            {business.phone ? `, tel. ${formatPhone(business.phone)}` : ''}
-          </p>
+          {/* Dokument dla księgowej: pełna nazwa z CEIDG, adres i NIP (Ustawienia → Dane zakładu). */}
+          <p className={styles.business}>{businessLegalName(business)}</p>
+          {(() => {
+            const details = [
+              businessAddress(business),
+              business.nip ? `NIP ${business.nip}` : '',
+              business.phone ? `tel. ${formatPhone(business.phone)}` : '',
+            ].filter(Boolean).join(' · ');
+            return details ? <p className={styles.businessDetails}>{details}</p> : null;
+          })()}
           <p className={styles.meta}>
             Data spisu: <strong>{formatCountDate(count.countDate)}</strong>
             <span className={styles.basis}> · Wycena wg ceny {basis === 'sale' ? 'sprzedaży' : 'zakupu'}</span>

@@ -15,6 +15,12 @@ export interface WorkOrderItem {
   olLensName: string;
   opLensPrice: string;
   olLensPrice: string;
+  /** Ilość sztuk szkła/soczewki dla oka (tekst z pola formularza; pusty = 1). */
+  opQty: string;
+  olQty: string;
+  /** Usługa (np. montaż): nazwa i cena. */
+  serviceName: string;
+  servicePrice: string;
   inventoryItemIdOp: string;
   inventoryItemIdOl: string;
   inventoryItemIdFrame: string;

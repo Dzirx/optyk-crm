@@ -100,7 +100,7 @@ export const PATCH = withBusiness(
       if (items !== undefined) {
         const existingItems = await tx.workOrderItem.findMany({
           where: { workOrderId: id },
-          select: { id: true, inventoryItemIdOp: true, inventoryItemIdOl: true, inventoryItemIdFrame: true },
+          select: { id: true, inventoryItemIdOp: true, inventoryItemIdOl: true, inventoryItemIdFrame: true, opQty: true, olQty: true },
         });
         // Nowo powiązane towary muszą dalej istnieć (powiązania, które zlecenie już ma, mogą wskazywać usunięty towar).
         const kept = existingItems.flatMap((e) => [e.inventoryItemIdOp, e.inventoryItemIdOl, e.inventoryItemIdFrame]).filter((x): x is string => !!x);

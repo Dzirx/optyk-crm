@@ -4,12 +4,14 @@ import { useState, useEffect, useRef } from 'react';
 import { formatInvLabel } from '../_lib/helpers';
 import type { InventoryItem } from '../_lib/types';
 
-export function InventorySelect({ value, onChange, onSelectItem, items, placeholder }: {
+export function InventorySelect({ value, onChange, onSelectItem, items, placeholder, defaultCategory }: {
   value: string;
   onChange: (id: string) => void;
   onSelectItem?: (inv: InventoryItem | null) => void;
   items: InventoryItem[];
   placeholder: string;
+  /** Kategoria zaznaczona po otwarciu listy (np. „Oprawki” dla oprawki); '' = wszystkie. */
+  defaultCategory?: (categories: string[]) => string;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -46,7 +48,11 @@ export function InventorySelect({ value, onChange, onSelectItem, items, placehol
     <div ref={ref} className="relative flex-1 min-w-0">
       <button
           type="button"
-          onClick={() => { setOpen(o => !o); setSearch(''); }}
+          onClick={() => {
+            if (!open) setActiveCategory(defaultCategory?.(categories) ?? '');
+            setOpen(o => !o);
+            setSearch('');
+          }}
           className="w-full border border-gray-200 rounded px-2 h-9 text-sm text-left flex items-center justify-between bg-white gap-1"
         >
           <span className={`truncate ${selected ? 'text-gray-900' : 'text-gray-400'}`}>

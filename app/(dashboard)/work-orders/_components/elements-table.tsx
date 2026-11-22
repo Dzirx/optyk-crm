@@ -3,16 +3,21 @@
 import { useLanguage } from '@/lib/i18n/language-context';
 import type { TranslationKey } from '@/lib/i18n/translations';
 import { SOURCE_OPTIONS } from '../_lib/constants';
-import { ELEMENT_FIELDS, changeElementName, changeElementSource, pickInventory, selectableInventory } from '../_lib/helpers';
+import { ELEMENT_FIELDS, QTY_FIELD, changeElementName, changeElementSource, pickInventory, preferredCategory, selectableInventory } from '../_lib/helpers';
+import { qtyOf } from '@/lib/work-orders/totals';
+import { formatPln } from '@/lib/money';
 import type { Element, InventoryItem, SetItemFields, Source, WorkOrderItem } from '../_lib/types';
 import { InventorySelect } from './inventory-select';
 
-// Jedna siatka dla nagłówka i wierszy: etykieta | Skąd | Co (elastyczna) | Cena | zł.
+// Jedna siatka dla nagłówka i wierszy: etykieta | Skąd | Co (elastyczna) | Ilość × cena zł.
 // Poniżej 640 px wiersz się zawija: etykieta + Skąd w pierwszej linii, Co i Cena pod spodem.
-const COLS = 'sm:grid-cols-[6rem_11rem_minmax(0,1fr)_7rem_1.5rem]';
+const COLS = 'sm:grid-cols-[6rem_11rem_minmax(0,1fr)_13rem]';
 const GRID = `grid grid-cols-[5rem_minmax(0,1fr)] gap-x-2 gap-y-1 ${COLS}`;
 const CTRL = 'h-9 w-full border border-gray-200 rounded px-2 text-sm text-gray-900 focus:ring-1 focus:ring-blue-400';
 const INPUT = `${CTRL} placeholder:text-gray-400`;
+// Pola w jednym wierszu „ilość × cena”: bez w-full, szerokość daje flex.
+const QTY_INPUT = `${INPUT.replace('w-full ', '')} w-14 shrink-0 text-center`;
+const PRICE_INPUT = `${INPUT.replace('w-full ', '')} min-w-0 flex-1 text-right`;
 
 interface ElementRowProps {
   el: Element;
@@ -42,6 +47,7 @@ function ElementRow({ el, label, contact, item, idx, inventoryItems, setMultiple
         onChange={() => {}}
         onSelectItem={inv => set(pickInventory(item, el, inv))}
         items={selectableInventory(inventoryItems, item[f.inv])}
+        defaultCategory={(cats) => preferredCategory(el, contact, cats)}
         placeholder={t('selectFromInventory')}
       />
     );
@@ -61,6 +67,8 @@ function ElementRow({ el, label, contact, item, idx, inventoryItems, setMultiple
   }
 
   const hasPrice = source !== 'none' && source !== 'own';
+  const qtyField = el === 'frame' ? null : QTY_FIELD[el];
+  const qty = qtyField ? qtyOf(item[qtyField]) : 1;
 
   return (
     <div className={`${GRID} items-start py-1.5`}>
@@ -75,20 +83,81 @@ function ElementRow({ el, label, contact, item, idx, inventoryItems, setMultiple
       </select>
       <div className="col-span-2 min-w-0 sm:col-span-1">{what}</div>
       {hasPrice ? (
-        <>
-          <input
-            type="number" step="0.01" min="0"
-            value={price}
-            onChange={e => set({ [f.price]: e.target.value } as Partial<WorkOrderItem>)}
-            className={`${INPUT} col-span-1 text-right`}
-            placeholder="0.00"
-            aria-label={`${label}: ${t('colPrice')}`}
-          />
-          <span className="flex h-9 items-center text-xs text-gray-500">zł</span>
-        </>
+        <div className="col-span-2 sm:col-span-1">
+          <div className="flex items-center gap-1">
+            {qtyField ? (
+              <>
+                <input
+                  type="number" step="1" min="1" max="99"
+                  value={item[qtyField]}
+                  onChange={e => set({ [qtyField]: e.target.value } as Partial<WorkOrderItem>)}
+                  onBlur={() => set({ [qtyField]: String(qtyOf(item[qtyField])) } as Partial<WorkOrderItem>)}
+                  className={QTY_INPUT}
+                  aria-label={`${label}: ${t('qtyShort')}`}
+                />
+                <span className="shrink-0 text-xs text-gray-500">×</span>
+              </>
+            ) : (
+              <span className="w-[4.25rem] shrink-0" />
+            )}
+            <input
+              type="number" step="0.01" min="0"
+              value={price}
+              onChange={e => set({ [f.price]: e.target.value } as Partial<WorkOrderItem>)}
+              className={PRICE_INPUT}
+              placeholder="0.00"
+              aria-label={`${label}: ${t('colPrice')}`}
+            />
+            <span className="shrink-0 text-xs text-gray-500">zł</span>
+          </div>
+          {qty > 1 && price !== '' && (
+            <p className="mt-0.5 text-right text-xs text-gray-600" data-testid={`line-total-${el}`}>
+              {t('lineTotal')}: {formatPln(Number(price) * qty)}
+            </p>
+          )}
+        </div>
       ) : (
-        <span className="col-span-2 hidden h-9 items-center text-sm text-gray-400 sm:flex">—</span>
+        <span className="hidden h-9 items-center text-sm text-gray-400 sm:flex">—</span>
       )}
+    </div>
+  );
+}
+
+/** Wiersz „Usługa” (np. montaż): nazwa i cena wliczana do sumy pozycji. */
+function ServiceRow({ item, idx, setMultipleItemFields }: {
+  item: WorkOrderItem;
+  idx: number;
+  setMultipleItemFields: SetItemFields;
+}) {
+  const { t } = useLanguage();
+  const set = (fields: Partial<WorkOrderItem>) => setMultipleItemFields(idx, fields);
+  return (
+    <div className={`${GRID} items-start py-1.5`}>
+      <span className="flex h-9 items-center text-xs font-medium text-gray-700">{t('service')}</span>
+      <span className="hidden sm:block" />
+      <div className="col-span-2 min-w-0 sm:col-span-1">
+        <input
+          type="text"
+          value={item.serviceName}
+          onChange={e => set({ serviceName: e.target.value })}
+          className={`${INPUT} min-w-0`}
+          placeholder={t('servicePlaceholder')}
+          aria-label={`${t('service')}: ${t('colWhat')}`}
+        />
+      </div>
+      <div className="col-span-2 flex items-center gap-1 sm:col-span-1">
+        <span className="w-[4.25rem] shrink-0" />
+        <input
+          type="number" step="0.01" min="0"
+          value={item.servicePrice}
+          // Cena bez nazwy: domyślnie „Montaż”, żeby na wydruku było wiadomo, za co jest kwota.
+          onChange={e => set({ servicePrice: e.target.value, ...(item.serviceName.trim() ? {} : { serviceName: t('serviceDefault') }) })}
+          className={PRICE_INPUT}
+          placeholder="0.00"
+          aria-label={`${t('service')}: ${t('colPrice')}`}
+        />
+        <span className="shrink-0 text-xs text-gray-500">zł</span>
+      </div>
     </div>
   );
 }
@@ -112,11 +181,12 @@ export function ElementsTable({ item, idx, inventoryItems, setMultipleItemFields
           <span />
           <span>{t('colSource')}</span>
           <span>{t('colWhat')}</span>
-          <span className="col-span-2">{t('colPrice')}</span>
+          <span>{t('colQtyPrice')}</span>
         </div>
         <ElementRow el="op" label={contact ? t('contactLensOp') : t('lensOp')} {...rowProps} />
         <ElementRow el="ol" label={contact ? t('contactLensOl') : t('lensOl')} {...rowProps} />
         {!contact && <ElementRow el="frame" label={t('frame')} {...rowProps} />}
+        {!contact && <ServiceRow item={item} idx={idx} setMultipleItemFields={setMultipleItemFields} />}
       </div>
       <p className="mt-1 text-xs text-gray-500">{t('sourceHint')}</p>
     </div>
